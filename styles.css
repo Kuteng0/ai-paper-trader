@@ -21,6 +21,7 @@ button, input, select { font: inherit; }
 h1, h2, p { margin: 0; } h1 { font-size: 28px; letter-spacing: 0; } h2 { font-size: 16px; letter-spacing: 0; }
 .icon-button, button, .file-button { border: 0; border-radius: 8px; background: var(--blue); color: #071018; font-weight: 700; min-height: 44px; padding: 0 16px; }
 .icon-button { width: 44px; padding: 0; font-size: 24px; }
+.wide-button { width: 100%; background: var(--yellow); }
 .status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
 .status-grid article, .panel { background: rgba(23, 36, 48, .92); border: 1px solid var(--line); border-radius: 8px; }
 .status-grid article { padding: 12px; }
@@ -46,8 +47,17 @@ label input, label select { width: 100%; min-height: 42px; margin-top: 6px; bord
 .metric-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .metric-list div { background: #0c141b; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
 .metric-list strong { display: block; margin-top: 6px; font-size: 17px; overflow-wrap: anywhere; }
-.trade-log { display: grid; gap: 8px; max-height: 420px; overflow: auto; }
-.trade-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #0c141b; }
+.trade-log, .feedback-log, .leaderboard { display: grid; gap: 8px; max-height: 420px; overflow: auto; }
+.feedback-log { margin-top: 10px; max-height: 190px; }
+.feedback-item, .rank-item, .trade-item { border: 1px solid var(--line); border-radius: 8px; background: #0c141b; }
+.feedback-item { padding: 10px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.rank-item { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 10px; }
+.rank-no { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: var(--panel-2); color: var(--blue); font-weight: 800; font-size: 13px; }
+.rank-main strong { display: block; font-size: 14px; }
+.rank-main span, .rank-side span { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.rank-side { text-align: right; }
+.rank-side strong { display: block; color: var(--green); font-size: 18px; }
+.trade-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 10px; }
 .trade-item strong { font-size: 14px; } .trade-item span, .trade-item small { color: var(--muted); font-size: 12px; } .trade-item .profit { color: var(--green); } .trade-item .loss { color: var(--red); }
 .empty { color: var(--muted); font-size: 13px; }
-@media (max-width: 360px) { .form-grid, .metric-list { grid-template-columns: 1fr; } h1 { font-size: 24px; } }
+@media (max-width: 360px) { .form-grid, .metric-list { grid-template-columns: 1fr; } h1 { font-size: 24px; } .rank-item { grid-template-columns: 1fr; } .rank-side { text-align: left; } }
