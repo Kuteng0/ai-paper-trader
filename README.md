@@ -1,44 +1,77 @@
-# AI Paper Trader
+# AI 模拟交易系统
 
-An iPhone-friendly paper trading PWA for futures and index simulation. It runs in Safari, can be added to the iPhone home screen, and uses a Cloudflare Pages Function to fetch historical market data.
+这是一个适合 iPhone Safari 使用的期货/指数模拟交易 PWA。它不会连接真实账户，不会实盘下单，只用于模拟交易、记录结果和参数优化。
 
-## Features
+## 支持品种
 
-- Fetch historical bars through Cloudflare Pages Functions
-- Simulate trades with EMA, RSI, ATR, stop-loss and take-profit rules
-- Optimize strategy parameters with a train/test split
-- Scan ES, NQ, YM, GC, CL, NG and Nikkei 225 reference data
-- Save paper trade results in browser local storage
-- Export trade logs as CSV
+- `ES=F` 标普500期货 ES
+- `NQ=F` 纳指期货 NQ
+- `YM=F` 道指期货 YM
+- `GC=F` 黄金期货 GC
+- `CL=F` 原油期货 CL
+- `NG=F` 天然气期货 NG
+- `^N225` 日经225指数参考数据
 
-## Cloudflare Pages Settings
+## iPhone 使用方法
 
-Use these settings when connecting this GitHub repository to Cloudflare Pages:
+1. 用 iPhone Safari 打开 Cloudflare Pages 地址。
+2. 点 Safari 分享按钮。
+3. 选择“添加到主屏幕”。
+4. 以后从主屏幕图标打开。
 
-```text
-Framework preset: None
-Build command: leave empty
-Build output directory: .
-Root directory: /
-```
+## 基本模拟流程
 
-Cloudflare should automatically detect the `functions/api/history.js` Pages Function.
+1. 选择品种，例如“标普500期货 ES”或“黄金期货 GC”。
+2. 选择周期，建议先用 `15分钟`。
+3. 点“获取行情”。
+4. 点“运行模拟”。
+5. 查看净利润、胜率、最大回撤、盈亏比和交易日志。
 
-## Important Limits
+## 让 AI 自主学习的方法
 
-- This is simulation software, not financial advice.
-- It does not connect to a real trading account.
-- Yahoo Finance chart data is suitable for research and simulation, not live execution.
-- A good backtest does not guarantee future profit.
-- Do not use real money until the system has enough out-of-sample paper trading history.
+点击“自主学习”后，系统会：
 
-## Suggested Paper Trading Gate
+1. 把历史行情分成训练段和测试段。
+2. 在训练段上测试多组参数，例如 EMA 快慢线、ATR 止损、止盈倍数。
+3. 用测试段验证参数，避免只适合过去行情。
+4. 保存当前表现最好的参数。
+5. 用最佳参数重新模拟并更新交易日志。
 
-Before following with small real capital, require at least:
+这不是大语言模型预测行情，而是规则策略的自动参数优化。它的目标是减少情绪化和随意交易，不保证盈利。
 
-- 1 month of paper trading
-- 30 or more trades
-- Max drawdown below 5%
-- Profit factor above 1.2
-- No martingale or loss-averaging behavior
-- Every real trade uses a stop or OCO order
+## 扫描推荐
+
+点击“扫描推荐”后，系统会自动测试多个品种：ES、NQ、黄金、原油、日经、道指、天然气。系统会按测试段表现排序，并把当前评分最高的品种设为推荐。
+
+推荐优先级建议：
+
+1. ES 标普500：适合作为核心模拟品种。
+2. NQ 纳指：机会多，但波动大。
+3. GC 黄金：晚上也常有机会。
+4. CL 原油：波动强，但受新闻影响大。
+5. NG 天然气：波动极端，不建议小资金优先跟单。
+
+## 风控参数说明
+
+- 初始资金：模拟账户本金，默认 50,000 日元。
+- 单笔风险%：每笔模拟交易最多亏本金的比例，建议 0.3% 到 0.5%。
+- 日亏损上限%：当天亏损达到该比例后，系统停止当天新模拟交易。
+- 最多持仓K线：超过该时间还没止盈止损，就按超时离场。
+
+## 小资金实盘前门槛
+
+在考虑 5万日币小资金跟单前，建议至少满足：
+
+- 连续模拟 1 个月。
+- 交易笔数不少于 30 笔。
+- 最大回撤低于 5%。
+- 盈亏比大于 1.2。
+- 连续亏损时系统能停下来。
+- 真实交易必须设置止损或 OCO。
+
+## 重要限制
+
+- 当前行情来自 Yahoo Finance chart 数据，适合研究和模拟，不适合作为实盘下单依据。
+- 系统不会自动连接外貨EX CFD 或任何真实交易账户。
+- 回测盈利不代表未来盈利。
+- 不建议使用手机自动点击方式进行实盘自动下单。
