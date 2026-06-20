@@ -30,7 +30,7 @@
         <div class="section-title"><h2>系统反馈</h2><span id="marketMode">等待操作</span></div>
         <div id="signalCard" class="signal-card neutral">
           <div><span>当前状态</span><strong id="signalAction">获取行情或开始学习</strong></div>
-          <p id="signalReason">系统会自动模拟交易、记录结果、更新排行榜；不会连接真实账户。</p>
+          <p id="signalReason">系统会自动模拟交易、记录结果、更新排行榜；不连接真实账户。</p>
         </div>
       </section>
 
@@ -85,6 +85,19 @@
       </section>
 
       <section class="panel">
+        <div class="section-title"><h2>模式</h2><span id="cloudStatus">本地+云端</span></div>
+        <div class="button-row">
+          <button id="trainingModeButton" type="button">训练模式</button>
+          <button id="followModeButton" type="button">AI跟单提醒</button>
+        </div>
+        <div class="button-row secondary-row">
+          <button id="syncCloudButton" type="button">同步云端</button>
+          <button id="restoreCloudButton" type="button">恢复云端</button>
+        </div>
+        <p class="hint">训练模式会学习并云端备份；AI跟单提醒会从胜率前10里选择最高胜率策略，通过LINE推送。</p>
+      </section>
+
+      <section class="panel">
         <div class="section-title"><h2>全品种随机学习</h2><span id="learnCount">0 条记录</span></div>
         <button id="randomLearnButton" class="wide-button" type="button">随机模拟并升级AI</button>
         <p class="hint">系统会对所有品种随机生成多组参数，分别模拟交易，保存结果，并更新胜率前10排行榜。</p>
@@ -112,5 +125,6 @@
       </section>
     </main>
     <script src="app.js"></script>
+    <script src="cloud.js"></script>
   </body>
 </html>
