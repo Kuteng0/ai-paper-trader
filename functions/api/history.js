@@ -1,11 +1,11 @@
 const ALLOWED = {
-  "NQ=F": "Nasdaq futures NQ",
-  "ES=F": "S&P 500 futures ES",
-  "YM=F": "Dow futures YM",
-  "GC=F": "Gold futures GC",
-  "CL=F": "Crude oil futures CL",
-  "NG=F": "Natural gas futures NG",
-  "^N225": "Nikkei 225 index"
+  "NQ=F": "纳指期货 NQ",
+  "ES=F": "标普500期货 ES",
+  "YM=F": "道指期货 YM",
+  "GC=F": "黄金期货 GC",
+  "CL=F": "原油期货 CL",
+  "NG=F": "天然气期货 NG",
+  "^N225": "日经225指数"
 };
 
 const INTERVALS = new Set(["5m", "15m", "30m", "1h", "1d"]);
@@ -17,9 +17,9 @@ export async function onRequestGet({ request }) {
   const interval = url.searchParams.get("interval") || "15m";
   const range = url.searchParams.get("range") || "60d";
 
-  if (!ALLOWED[symbol]) return json({ error: "Unsupported symbol." }, 400);
-  if (!INTERVALS.has(interval)) return json({ error: "Unsupported interval." }, 400);
-  if (!RANGES.has(range)) return json({ error: "Unsupported range." }, 400);
+  if (!ALLOWED[symbol]) return json({ error: "不支持的品种。" }, 400);
+  if (!INTERVALS.has(interval)) return json({ error: "不支持的周期。" }, 400);
+  if (!RANGES.has(range)) return json({ error: "不支持的数据范围。" }, 400);
 
   const endpoint = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
   endpoint.searchParams.set("range", range);
@@ -31,13 +31,13 @@ export async function onRequestGet({ request }) {
     cf: { cacheTtl: interval === "1d" ? 3600 : 300, cacheEverything: true }
   });
 
-  if (!response.ok) return json({ error: "Market data provider is unavailable." }, 502);
+  if (!response.ok) return json({ error: "行情数据源暂时不可用。" }, 502);
 
   const payload = await response.json();
   const result = payload.chart?.result?.[0];
   const quote = result?.indicators?.quote?.[0];
   const timestamps = result?.timestamp || [];
-  if (!quote || !timestamps.length) return json({ error: "No market data returned." }, 502);
+  if (!quote || !timestamps.length) return json({ error: "没有返回行情数据。" }, 502);
 
   const candles = timestamps.map((ts, i) => ({
     time: new Date(ts * 1000).toISOString().replace("T", " ").slice(0, 16),
