@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#101820">
+    <title>AI Paper Trader</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/icon-192.svg">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">iPhone paper trading lab</p>
+          <h1>AI Paper Trader</h1>
+        </div>
+        <button id="installButton" class="icon-button" type="button" title="Install" hidden>+</button>
+      </header>
+
+      <section class="status-grid" aria-label="Account status">
+        <article><span>Capital</span><strong id="equityValue">JPY 50,000</strong></article>
+        <article><span>Total P/L</span><strong id="pnlValue">JPY 0</strong></article>
+        <article><span>Win rate</span><strong id="winRateValue">0%</strong></article>
+        <article><span>Max drawdown</span><strong id="drawdownValue">0%</strong></article>
+      </section>
+
+      <section class="panel signal-panel">
+        <div class="section-title"><h2>System View</h2><span id="marketMode">Waiting</span></div>
+        <div id="signalCard" class="signal-card neutral">
+          <div><span>Next action</span><strong id="signalAction">Fetch data or load sample</strong></div>
+          <p id="signalReason">The system simulates trades with EMA, RSI, ATR and risk rules. It does not connect to a real account.</p>
+        </div>
+      </section>
+
+      <section class="panel controls">
+        <div class="section-title"><h2>Market Data</h2><span id="dataStatus">0 bars</span></div>
+        <div class="form-grid market-picker">
+          <label>Symbol
+            <select id="symbolInput">
+              <option value="NQ=F">Nasdaq futures NQ</option>
+              <option value="ES=F" selected>S&amp;P 500 futures ES</option>
+              <option value="YM=F">Dow futures YM</option>
+              <option value="GC=F">Gold futures GC</option>
+              <option value="CL=F">Crude oil futures CL</option>
+              <option value="NG=F">Natural gas futures NG</option>
+              <option value="^N225">Nikkei 225 index</option>
+            </select>
+          </label>
+          <label>Interval
+            <select id="intervalInput">
+              <option value="5m">5 min</option>
+              <option value="15m" selected>15 min</option>
+              <option value="30m">30 min</option>
+              <option value="1h">1 hour</option>
+              <option value="1d">Daily</option>
+            </select>
+          </label>
+        </div>
+        <div class="button-row">
+          <button id="fetchButton" type="button">Fetch data</button>
+          <label class="file-button">Import CSV<input id="csvInput" type="file" accept=".csv,text/csv"></label>
+        </div>
+        <div class="button-row secondary-row">
+          <button id="sampleButton" type="button">Load sample</button>
+          <button id="scanButton" type="button">Scan markets</button>
+        </div>
+        <p class="hint">CSV columns: time/open/high/low/close. Yahoo Finance data is for simulation, not live execution.</p>
+      </section>
+
+      <section class="panel">
+        <div class="section-title"><h2>Risk Settings</h2><button id="resetButton" class="text-button" type="button">Reset</button></div>
+        <div class="form-grid">
+          <label>Initial capital<input id="capitalInput" type="number" min="10000" step="1000" value="50000"></label>
+          <label>Risk per trade %<input id="riskInput" type="number" min="0.1" max="3" step="0.1" value="0.5"></label>
+          <label>Daily loss limit %<input id="dailyLossInput" type="number" min="0.5" max="5" step="0.1" value="1"></label>
+          <label>Max hold bars<input id="maxHoldInput" type="number" min="3" max="80" step="1" value="18"></label>
+        </div>
+      </section>
+
+      <section class="action-bar" aria-label="Main actions">
+        <button id="runButton" type="button">Run simulation</button>
+        <button id="optimizeButton" type="button">Optimize</button>
+      </section>
+
+      <section class="panel metrics">
+        <div class="section-title"><h2>Results</h2><span id="tradeCount">0 trades</span></div>
+        <div class="metric-list">
+          <div><span>Net profit</span><strong id="netProfit">JPY 0</strong></div>
+          <div><span>Average R</span><strong id="avgR">0.00</strong></div>
+          <div><span>Profit factor</span><strong id="profitFactor">0.00</strong></div>
+          <div><span>Best params</span><strong id="bestParams">None</strong></div>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="section-title"><h2>Trade Log</h2><button id="exportButton" class="text-button" type="button">Export</button></div>
+        <div id="tradeLog" class="trade-log"><p class="empty">No simulated trades yet.</p></div>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
