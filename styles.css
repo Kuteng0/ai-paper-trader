@@ -1,0 +1,53 @@
+:root {
+  color-scheme: dark;
+  --bg: #101820;
+  --panel: #172430;
+  --panel-2: #213340;
+  --text: #eef5f8;
+  --muted: #9fb1bc;
+  --line: rgba(255,255,255,.11);
+  --green: #35d08a;
+  --red: #ff6472;
+  --yellow: #ffc857;
+  --blue: #67b7ff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(circle at 10% -10%, #24495a 0, transparent 30%), var(--bg); color: var(--text); }
+button, input, select { font: inherit; }
+.app-shell { width: min(100%, 520px); margin: 0 auto; padding: max(16px, env(safe-area-inset-top)) 14px max(26px, env(safe-area-inset-bottom)); }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.eyebrow { margin: 0 0 4px; color: var(--blue); font-size: 12px; }
+h1, h2, p { margin: 0; } h1 { font-size: 28px; letter-spacing: 0; } h2 { font-size: 16px; letter-spacing: 0; }
+.icon-button, button, .file-button { border: 0; border-radius: 8px; background: var(--blue); color: #071018; font-weight: 700; min-height: 44px; padding: 0 16px; }
+.icon-button { width: 44px; padding: 0; font-size: 24px; }
+.status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.status-grid article, .panel { background: rgba(23, 36, 48, .92); border: 1px solid var(--line); border-radius: 8px; }
+.status-grid article { padding: 12px; }
+.status-grid span, .metric-list span, label, .signal-card span { display: block; color: var(--muted); font-size: 12px; }
+.status-grid strong { display: block; margin-top: 6px; font-size: 21px; }
+.panel { padding: 14px; margin: 10px 0; }
+.section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.section-title span { color: var(--muted); font-size: 12px; }
+.signal-card { border-radius: 8px; padding: 14px; border: 1px solid var(--line); background: var(--panel-2); }
+.signal-card strong { display: block; margin: 4px 0 8px; font-size: 22px; }
+.signal-card p { color: var(--muted); line-height: 1.45; font-size: 13px; }
+.signal-card.long { border-color: rgba(53,208,138,.5); } .signal-card.short { border-color: rgba(255,100,114,.55); } .signal-card.neutral { border-color: rgba(255,200,87,.45); }
+.button-row, .action-bar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.file-button { display: grid; place-items: center; position: relative; overflow: hidden; text-align: center; }
+.file-button input { position: absolute; inset: 0; opacity: 0; }
+.hint { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+label input, label select { width: 100%; min-height: 42px; margin-top: 6px; border-radius: 8px; border: 1px solid var(--line); background: #0c141b; color: var(--text); padding: 0 10px; }
+.market-picker { margin-bottom: 10px; } .secondary-row { margin-top: 8px; }
+.action-bar { position: sticky; bottom: env(safe-area-inset-bottom); z-index: 5; padding: 8px 0; background: linear-gradient(180deg, transparent, var(--bg) 28%); }
+.action-bar button:first-child { background: var(--green); } .action-bar button:last-child { background: var(--yellow); }
+.text-button { min-height: 32px; padding: 0; background: transparent; color: var(--blue); }
+.metric-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.metric-list div { background: #0c141b; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.metric-list strong { display: block; margin-top: 6px; font-size: 17px; overflow-wrap: anywhere; }
+.trade-log { display: grid; gap: 8px; max-height: 420px; overflow: auto; }
+.trade-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #0c141b; }
+.trade-item strong { font-size: 14px; } .trade-item span, .trade-item small { color: var(--muted); font-size: 12px; } .trade-item .profit { color: var(--green); } .trade-item .loss { color: var(--red); }
+.empty { color: var(--muted); font-size: 13px; }
+@media (max-width: 360px) { .form-grid, .metric-list { grid-template-columns: 1fr; } h1 { font-size: 24px; } }
