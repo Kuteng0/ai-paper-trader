@@ -1,4 +1,5 @@
 const KEY = "learning:default";
+const MIN_TRADES = 10;
 
 export async function onRequestPost({ env }) {
   if (!env.LEARNING_KV) return json({ error: "Cloudflare KV 尚未配置。请绑定 LEARNING_KV。" }, 500);
@@ -8,11 +9,12 @@ export async function onRequestPost({ env }) {
 
   const records = await env.LEARNING_KV.get(KEY, "json") || [];
   const top10 = records
-    .filter((r) => r && r.trades >= 3 && Number.isFinite(r.winRate) && r.strategy)
-    .sort((a, b) => (b.winRate - a.winRate) || (b.trades - a.trades) || (b.profitFactor - a.profitFactor) || (b.netProfit - a.netProfit))
+    .filter((r) => r && r.trades >= MIN_TRADES && Number.isFinite(r.winRate) && r.strategy && r.grade !== "C")
+    .map((r) => ({ ...r, score: Number.isFinite(r.score) ? r.score : scoreRecord(r), grade: r.grade || gradeRecord(r) }))
+    .sort((a, b) => (b.score - a.score) || (b.winRate - a.winRate) || (b.profitFactor - a.profitFactor) || (b.trades - a.trades))
     .slice(0, 10);
 
-  if (!top10.length) return json({ error: "排行榜还没有可用策略。请先运行训练模式。" }, 400);
+  if (!top10.length) return json({ error: "排行榜还没有通过稳健过滤的可用策略。请先运行训练模式。" }, 400);
 
   const best = top10[0];
   const live = await buildLivePlan(best);
@@ -34,7 +36,7 @@ export async function onRequestPost({ env }) {
     return json({ error: `LINE推送失败：${response.status} ${detail}` }, 502);
   }
 
-  return json({ message: `LINE已发送：${best.label}，${live.actionText}。`, selected: best, live });
+  return json({ message: `LINE已发送：${best.label}，等级${best.grade}，${live.actionText}。`, selected: best, live });
 }
 
 async function buildLivePlan(best) {
@@ -55,7 +57,7 @@ async function buildLivePlan(best) {
     return {
       action: "wait",
       actionText: "无明确信号，观望",
-      reason: `当前${trend}，但没有出现策略入场信号。不要为了交易而开仓。`,
+      reason: `当前${trend}，但没有出现策略入场信号。不为了交易而开仓。`,
       entry, atr: atrNow, rsi: ind.rsi[i], trend
     };
   }
@@ -72,9 +74,8 @@ async function buildLivePlan(best) {
 }
 
 async function fetchCandles(symbol, interval) {
-  const range = "60d";
   const endpoint = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
-  endpoint.searchParams.set("range", range);
+  endpoint.searchParams.set("range", "60d");
   endpoint.searchParams.set("interval", interval);
   endpoint.searchParams.set("includePrePost", "true");
   const response = await fetch(endpoint.toString(), { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
@@ -115,8 +116,9 @@ function signalAt(i, candles, ind, strategy) {
 function buildMessage(best, count, live) {
   const lines = [
     "AI实盘操作参考",
-    `策略来源：胜率前${count}第1名 ${best.label}`,
-    `周期：${best.interval} / 历史胜率：${pct(best.winRate)} / 交易：${best.trades}笔`,
+    `策略来源：稳健排行榜前${count}第1名 ${best.label}`,
+    `等级：${best.grade} / 综合分：${Math.round(best.score || 0)}`,
+    `周期：${best.interval} / 历史正确率：${pct(best.winRate)} / 交易：${best.trades}笔`,
     `历史净利：${yen(best.netProfit)} / 回撤：${(best.maxDrawdown * 100).toFixed(1)}% / 盈亏比：${Number(best.profitFactor || 0).toFixed(2)}`,
     `参数：EMA ${best.strategy.fast}/${best.strategy.slow}, 止损 ${best.strategy.stopAtr}ATR, 止盈 ${best.strategy.takeProfitR}R`,
     "",
@@ -142,6 +144,22 @@ function buildMessage(best, count, live) {
   return lines.join("\n");
 }
 
+function gradeRecord(r) {
+  if (r.trades >= 18 && r.winRate >= 0.56 && r.profitFactor >= 1.35 && r.avgR > 0.15 && r.maxDrawdown <= 0.05) return "A";
+  if (r.trades >= MIN_TRADES && r.winRate >= 0.50 && r.profitFactor >= 1.15 && r.avgR > 0 && r.maxDrawdown <= 0.08) return "B";
+  return "C";
+}
+function scoreRecord(r) {
+  const grade = gradeRecord(r);
+  let score = r.winRate * 250 + Math.min(Number(r.profitFactor || 0), 4) * 90 + Number(r.avgR || 0) * 140 + Number(r.netProfit || 0) / 50000 * 450 - Number(r.maxDrawdown || 0) * 950 + Math.min(Number(r.trades || 0), 40) * 3;
+  if (r.trades < MIN_TRADES) score -= 300;
+  if (r.profitFactor < 1.15) score -= 180;
+  if (r.avgR <= 0) score -= 180;
+  if (r.maxDrawdown > 0.08) score -= 220;
+  if (grade === "A") score += 120;
+  if (grade === "C") score -= 120;
+  return score;
+}
 function pct(value) { return `${Math.round(value * 100)}%`; }
 function yen(value) { return new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(value || 0); }
 function fmt(value) { return Number.isFinite(value) ? Number(value).toFixed(2) : "-"; }

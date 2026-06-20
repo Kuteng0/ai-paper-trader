@@ -118,6 +118,39 @@ function summarize(capital, equity, maxDrawdown, trades) {
   return { capital, equity, netProfit: equity - capital, maxDrawdown, trades, winRate: trades.length ? wins.length / trades.length : 0, avgR: trades.length ? trades.reduce((s, t) => s + t.rValue, 0) / trades.length : 0, profitFactor: grossLoss ? grossWin / grossLoss : grossWin ? 99 : 0 };
 }
 
+const MIN_LEARNING_TRADES = 10;
+
+function evaluateStrategy(candles, cfg, strategy) {
+  const fullResult = runSimulation(candles, { ...cfg, strategy });
+  const validation = walkForwardValidation(candles, cfg, strategy);
+  const result = validation.trades >= MIN_LEARNING_TRADES ? validation : fullResult;
+  const quality = scoreResult(result, cfg.capital);
+  return { strategy, fullResult, validation, result, ...quality };
+}
+
+function walkForwardValidation(candles, cfg, strategy) {
+  if (candles.length < 160) return runSimulation(candles, { ...cfg, strategy });
+  const folds = 4;
+  const chunk = Math.floor(candles.length / folds);
+  const trades = [];
+  let maxDrawdown = 0;
+  for (let fold = 1; fold < folds; fold++) {
+    const start = Math.max(0, fold * chunk - Math.max(strategy.slow, 40));
+    const end = fold === folds - 1 ? candles.length : Math.min(candles.length, (fold + 1) * chunk);
+    const result = runSimulation(candles.slice(start, end), { ...cfg, strategy });
+    trades.push(...result.trades.map((trade) => ({ ...trade, walkForwardFold: fold })));
+    maxDrawdown = Math.max(maxDrawdown, result.maxDrawdown);
+  }
+  const equity = cfg.capital + trades.reduce((sum, trade) => sum + trade.pnl, 0);
+  return summarize(cfg.capital, equity, maxDrawdown, trades);
+}
+
+function gradeStrategy(result) {
+  if (result.trades.length >= 18 && result.winRate >= 0.56 && result.profitFactor >= 1.35 && result.avgR > 0.15 && result.maxDrawdown <= 0.05) return "A";
+  if (result.trades.length >= MIN_LEARNING_TRADES && result.winRate >= 0.50 && result.profitFactor >= 1.15 && result.avgR > 0 && result.maxDrawdown <= 0.08) return "B";
+  return "C";
+}
+
 function optimize() {
   if (state.candles.length < 80) throw new Error("至少需要80根K线才能自主学习。");
   const split = Math.floor(state.candles.length * 0.7), train = state.candles.slice(0, split), test = state.candles.slice(split - 40), grid = [];
@@ -135,19 +168,31 @@ function randomStrategy() {
 }
 function randomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 function randomFloat(min, max) { return Math.round((min + Math.random() * (max - min)) * 10) / 10; }
-function scoreResult(result, capital) { return result.winRate * 1000 + result.profitFactor * 80 + result.avgR * 120 + result.netProfit / Math.max(1, capital) * 500 - result.maxDrawdown * 700; }
+function scoreResult(result, capital) {
+  const trades = result.trades.length;
+  const grade = gradeStrategy(result);
+  let score = result.winRate * 250 + Math.min(result.profitFactor, 4) * 90 + result.avgR * 140 + result.netProfit / Math.max(1, capital) * 450 - result.maxDrawdown * 950 + Math.min(trades, 40) * 3;
+  if (trades < MIN_LEARNING_TRADES) score -= 300;
+  if (result.profitFactor < 1.15) score -= 180;
+  if (result.avgR <= 0) score -= 180;
+  if (result.maxDrawdown > 0.08) score -= 220;
+  if (grade === "A") score += 120;
+  if (grade === "C") score -= 120;
+  return { score, grade };
+}
 
 function makeRecord(symbol, interval, result, strategy, source) {
-  return { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, time: new Date().toLocaleString("ja-JP"), symbol, label: instruments[symbol]?.name || symbol, interval, source, trades: result.trades.length, winRate: result.winRate, netProfit: result.netProfit, maxDrawdown: result.maxDrawdown, profitFactor: result.profitFactor, avgR: result.avgR, strategy };
+  const quality = scoreResult(result, Number(els.capitalInput.value) || 50000);
+  return { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, time: new Date().toLocaleString("ja-JP"), symbol, label: instruments[symbol]?.name || symbol, interval, source, trades: result.trades.length, winRate: result.winRate, netProfit: result.netProfit, maxDrawdown: result.maxDrawdown, profitFactor: result.profitFactor, avgR: result.avgR, score: quality.score, grade: quality.grade, strategy };
 }
 function saveLearningRecord(record) {
-  if (record.trades < 3) return;
+  if (record.trades < MIN_LEARNING_TRADES || record.grade === "C") return;
   state.learning.push(record);
   state.learning = state.learning.slice(-300);
   localStorage.setItem("paperTrader.learning", JSON.stringify(state.learning));
 }
 function topRecords() {
-  return state.learning.slice().filter((r) => r.trades >= 3).sort((a, b) => (b.winRate - a.winRate) || (b.trades - a.trades) || (b.profitFactor - a.profitFactor) || (b.netProfit - a.netProfit)).slice(0, 10);
+  return state.learning.slice().filter((r) => r.trades >= MIN_LEARNING_TRADES && r.grade !== "C").sort((a, b) => ((b.score || 0) - (a.score || 0)) || (b.winRate - a.winRate) || (b.profitFactor - a.profitFactor) || (b.trades - a.trades)).slice(0, 10);
 }
 
 async function randomLearnAllMarkets() {
@@ -168,7 +213,8 @@ async function randomLearnAllMarkets() {
         if (result.trades.length < 3) continue;
         const record = makeRecord(symbol, interval, result, strategy, "随机学习");
         saveLearningRecord(record);
-        const scored = { symbol, data, result, strategy, record, score: scoreResult(result, cfg.capital) };
+        const quality = scoreResult(result, cfg.capital);
+        const scored = { symbol, data, result, strategy, record, score: quality.score, grade: quality.grade };
         allResults.push(scored);
         if (!bestForSymbol || scored.score > bestForSymbol.score) bestForSymbol = scored;
       }
@@ -246,6 +292,79 @@ async function loadSelectedHistory() {
   finally { setBusy(false); }
 }
 
+function optimize() {
+  if (state.candles.length < 80) throw new Error("至少需要80根K线才能自主学习。");
+  const grid = [];
+  for (const fast of [5, 8, 12]) {
+    for (const slow of [18, 21, 34]) {
+      if (fast >= slow) continue;
+      for (const stopAtr of [1.1, 1.4, 1.8]) {
+        for (const takeProfitR of [1.3, 1.8, 2.2]) {
+          grid.push({ fast, slow, rsiFloor: 42, rsiCeil: 58, stopAtr, takeProfitR });
+        }
+      }
+    }
+  }
+  const cfg = settings();
+  const scored = grid
+    .map((strategy) => evaluateStrategy(state.candles, cfg, strategy))
+    .filter((item) => item.result.trades.length >= MIN_LEARNING_TRADES && item.grade !== "C")
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length) throw new Error("没有找到足够稳健的参数组合。请换更长周期或其他品种。");
+  const best = scored[0];
+  state.best = { strategy: best.strategy, trainResult: best.fullResult, testResult: best.result, validation: best.validation, score: best.score, grade: best.grade };
+  localStorage.setItem("paperTrader.best", JSON.stringify(state.best));
+  return state.best;
+}
+
+async function randomLearnAllMarkets() {
+  const interval = els.intervalInput.value;
+  const cfg = settings();
+  const allResults = [];
+  setBusy(true);
+  addFeedback("开始稳健训练：全品种随机参数 + Walk-Forward 多段验证。", true);
+  try {
+    for (const symbol of SYMBOLS) {
+      addFeedback(`正在训练 ${instruments[symbol].name} ${interval}...`);
+      const data = await fetchHistory(symbol, interval);
+      let bestForSymbol = null;
+      const strategies = [defaultStrategy, ...Array.from({ length: 28 }, randomStrategy)];
+      for (const strategy of strategies) {
+        const evaluation = evaluateStrategy(data.candles, cfg, strategy);
+        const result = evaluation.result;
+        if (result.trades.length < MIN_LEARNING_TRADES || evaluation.grade === "C") continue;
+        const record = makeRecord(symbol, interval, result, strategy, "稳健训练");
+        record.score = evaluation.score;
+        record.grade = evaluation.grade;
+        saveLearningRecord(record);
+        const scored = { symbol, data, result, strategy, record, score: evaluation.score, grade: evaluation.grade };
+        allResults.push(scored);
+        if (!bestForSymbol || scored.score > bestForSymbol.score) bestForSymbol = scored;
+      }
+      if (bestForSymbol) {
+        addFeedback(`${data.label} 完成：等级 ${bestForSymbol.grade}，正确率 ${pct(bestForSymbol.result.winRate)}，交易 ${bestForSymbol.result.trades.length} 笔。`);
+      } else {
+        addFeedback(`${data.label} 完成：未通过稳健过滤，不进入排行榜。`);
+      }
+      renderLeaderboard();
+    }
+    if (!allResults.length) throw new Error("本轮没有策略通过稳健过滤。可以换周期，或先积累更多行情。");
+    const best = allResults.sort((a, b) => b.score - a.score)[0];
+    state.candles = best.data.candles;
+    state.best = { strategy: best.strategy, trainResult: best.result, testResult: best.result, score: best.score, grade: best.grade };
+    localStorage.setItem("paperTrader.best", JSON.stringify(state.best));
+    saveTrades(best.result.trades);
+    els.symbolInput.value = best.symbol;
+    render(best.result);
+    addFeedback(`训练完成：当前采用 ${best.data.label} 等级 ${best.grade} 策略，正确率 ${pct(best.result.winRate)}，排行榜已更新。`, true);
+  } catch (error) {
+    showError(error);
+    addFeedback(`训练失败：${error.message || error}`, true);
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function scanMarkets() {
   setBusy(true); addFeedback("开始扫描推荐：逐个品种获取行情并进行参数优化。", true);
   const interval = els.intervalInput.value, cfg = settings(), results = [];
@@ -260,6 +379,54 @@ async function scanMarkets() {
     const top = ranked[0]; els.symbolInput.value = top.symbol; state.candles = top.data.candles; state.best = top.best; localStorage.setItem("paperTrader.best", JSON.stringify(state.best)); saveTrades(top.result.trades); addFeedback(`扫描完成：当前推荐 ${top.label}，胜率 ${pct(top.result.winRate)}，净利 ${money.format(top.result.netProfit)}。`, true); render(top.result);
   } catch (error) { showError(error); addFeedback(`扫描失败：${error.message || error}`, true); }
   finally { setBusy(false); }
+}
+
+async function scanMarkets() {
+  setBusy(true);
+  addFeedback("开始稳健扫描：逐个品种优化参数并做多段验证。", true);
+  const interval = els.intervalInput.value, cfg = settings(), results = [];
+  try {
+    for (const symbol of SYMBOLS) {
+      addFeedback(`扫描 ${instruments[symbol].name}...`);
+      try {
+        const data = await fetchHistory(symbol, interval), prevCandles = state.candles, prevBest = state.best;
+        state.candles = data.candles;
+        const best = optimize();
+        const result = best.testResult || runSimulation(data.candles, { ...cfg, strategy: best.strategy });
+        const record = makeRecord(symbol, interval, result, best.strategy, "稳健扫描");
+        record.score = best.score || record.score;
+        record.grade = best.grade || record.grade;
+        saveLearningRecord(record);
+        results.push({ symbol, label: data.label, data, result, best, score: record.score, grade: record.grade });
+        state.candles = prevCandles;
+        state.best = prevBest;
+        addFeedback(`${data.label} 完成：等级 ${record.grade}，正确率 ${pct(result.winRate)}，交易 ${result.trades.length} 笔。`);
+      } catch (error) {
+        addFeedback(`${instruments[symbol].name} 跳过：${error.message || error}`);
+      }
+    }
+    const ranked = results.filter((x) => x.result.trades.length >= MIN_LEARNING_TRADES && x.grade !== "C").sort((a, b) => b.score - a.score);
+    if (!ranked.length) throw new Error("本轮扫描没有找到通过稳健过滤的品种。");
+    const top = ranked[0];
+    els.symbolInput.value = top.symbol;
+    state.candles = top.data.candles;
+    state.best = top.best;
+    localStorage.setItem("paperTrader.best", JSON.stringify(state.best));
+    saveTrades(top.result.trades);
+    addFeedback(`扫描完成：当前推荐 ${top.label}，等级 ${top.grade}，正确率 ${pct(top.result.winRate)}，净利 ${money.format(top.result.netProfit)}。`, true);
+    render(top.result);
+  } catch (error) {
+    showError(error);
+    addFeedback(`扫描失败：${error.message || error}`, true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderLeaderboard() {
+  els.learnCount.textContent = `${state.learning.length} 条记录`;
+  const rows = topRecords();
+  els.leaderboard.innerHTML = rows.length ? rows.map((r, i) => `<div class="rank-item"><div class="rank-no">${i + 1}</div><div class="rank-main"><strong>${r.label} / 等级 ${r.grade || "B"}</strong><span>${r.interval} / ${r.source} / ${r.time}</span><span>交易 ${r.trades} 笔，净利 ${money.format(r.netProfit)}，回撤 ${(r.maxDrawdown * 100).toFixed(1)}%，盈亏比 ${Number(r.profitFactor || 0).toFixed(2)}</span><span>综合分 ${Math.round(r.score || 0)}，参数 EMA ${r.strategy.fast}/${r.strategy.slow}，止损 ${r.strategy.stopAtr}ATR，止盈 ${r.strategy.takeProfitR}R</span></div><div class="rank-side"><span>正确率</span><strong>${pct(r.winRate)}</strong></div></div>`).join("") : `<p class="empty">还没有通过稳健过滤的学习记录。</p>`;
 }
 
 function saveTrades(trades) { state.trades = trades; localStorage.setItem("paperTrader.trades", JSON.stringify(trades)); }
