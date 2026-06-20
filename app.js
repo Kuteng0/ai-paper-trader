@@ -538,6 +538,28 @@ function renderLeaderboard() {
   els.leaderboard.innerHTML = rows.length ? rows.map((r, i) => `<div class="rank-item"><div class="rank-no">${i + 1}</div><div class="rank-main"><strong>${r.label} / 等级 ${r.grade || "B"}</strong><span>${r.interval} / ${r.source} / 行情 ${r.regime || "unknown"} / ${r.time}</span><span>交易 ${r.trades} 笔，净利 ${money.format(r.netProfit)}，回撤 ${(r.maxDrawdown * 100).toFixed(1)}%，盈亏比 ${Number(r.profitFactor || 0).toFixed(2)}</span><span>综合分 ${Math.round(r.score || 0)}，参数 EMA ${r.strategy.fast}/${r.strategy.slow}，止损 ${r.strategy.stopAtr}ATR，止盈 ${r.strategy.takeProfitR}R</span></div><div class="rank-side"><span>正确率</span><strong>${pct(r.winRate)}</strong></div></div>`).join("") : `<p class="empty">还没有通过稳健过滤的学习记录。</p>`;
 }
 
+function learningRecordKey(record) {
+  const s = record.strategy || {};
+  return [record.symbol, record.interval, record.regime || "unknown", s.fast, s.slow, s.rsiFloor, s.rsiCeil, s.stopAtr, s.takeProfitR].join("|");
+}
+
+function saveLearningRecord(record) {
+  if (record.trades < MIN_LEARNING_TRADES || record.grade === "C") return;
+  const map = new Map();
+  for (const existing of state.learning) {
+    if (!existing?.strategy) continue;
+    map.set(learningRecordKey(existing), existing);
+  }
+  const key = learningRecordKey(record);
+  const previous = map.get(key);
+  if (!previous || (record.score || 0) > (previous.score || 0)) map.set(key, record);
+  state.learning = [...map.values()]
+    .filter((item) => item.trades >= MIN_LEARNING_TRADES && item.grade !== "C")
+    .sort((a, b) => ((b.score || 0) - (a.score || 0)) || String(b.time || "").localeCompare(String(a.time || "")))
+    .slice(0, 300);
+  localStorage.setItem("paperTrader.learning", JSON.stringify(state.learning));
+}
+
 function saveTrades(trades) { state.trades = trades; localStorage.setItem("paperTrader.trades", JSON.stringify(trades)); }
 function showError(error) { els.signalCard.className = "signal-card neutral"; els.signalAction.textContent = "操作失败"; els.signalReason.textContent = error.message || String(error); }
 

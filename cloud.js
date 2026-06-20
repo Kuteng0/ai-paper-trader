@@ -43,6 +43,14 @@ async function restoreCloudLearning() {
   addFeedback(`云端恢复完成：已恢复 ${state.learning.length} 条学习记录。今日云端读取 ${getUsage("cloudReads")}/${FREE_LIMITS.cloudReadsPerDay}。`, true);
 }
 
+function confirmCloudAction(kind) {
+  const count = state.learning?.length || 0;
+  if (kind === "sync") {
+    return window.confirm(`确认同步云端？\n\n将把本机 ${count} 条AI学习记录上传到 Cloudflare KV，并可能覆盖/合并云端策略库。\n\n确认继续？`);
+  }
+  return window.confirm(`确认恢复云端？\n\n将从 Cloudflare KV 读取云端策略库，并替换本机当前AI学习记录。\n建议先确认你已经同步过重要训练结果。\n\n确认继续？`);
+}
+
 async function lineFollowRecommendation() {
   assertFreeLimit("linePushes", FREE_LIMITS.linePushesPerDay, "LINE推送");
   addFeedback("正在生成实盘参考：同步策略库、读取排行榜、获取最新行情、计算止损/止盈/OCO...");
@@ -169,8 +177,8 @@ function bindCloudButtons() {
   if (cloudStatus) cloudStatus.textContent = "免费保护模式";
   if (training) training.addEventListener("click", () => trainingMode().catch((error) => { showError(error); addFeedback(`训练模式失败：${error.message || error}`, true); }));
   if (follow) follow.addEventListener("click", () => lineFollowRecommendation().catch((error) => { showError(error); addFeedback(`实盘参考LINE失败：${error.message || error}`, true); }));
-  if (sync) sync.addEventListener("click", () => syncCloudLearning().catch((error) => { showError(error); addFeedback(`云端同步失败：${error.message || error}`, true); }));
-  if (restore) restore.addEventListener("click", () => restoreCloudLearning().catch((error) => { showError(error); addFeedback(`云端恢复失败：${error.message || error}`, true); }));
+  if (sync) sync.addEventListener("click", () => { if (!confirmCloudAction("sync")) { addFeedback("已取消云端同步。", true); return; } syncCloudLearning().catch((error) => { showError(error); addFeedback(`云端同步失败：${error.message || error}`, true); }); });
+  if (restore) restore.addEventListener("click", () => { if (!confirmCloudAction("restore")) { addFeedback("已取消云端恢复。", true); return; } restoreCloudLearning().catch((error) => { showError(error); addFeedback(`云端恢复失败：${error.message || error}`, true); }); });
 }
 
 bindCloudButtons();
