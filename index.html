@@ -4,79 +4,25 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#101820">
-    <title>AI 模拟交易系统</title>
+    <title>AI 实盘参考系统</title>
     <link rel="manifest" href="manifest.webmanifest">
     <link rel="apple-touch-icon" href="icons/icon-192.svg">
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <main class="app-shell">
-      <header class="topbar">
-        <div><p class="eyebrow">iPhone 期货模拟交易</p><h1>AI 模拟交易</h1></div>
-        <button id="installButton" class="icon-button" type="button" title="安装到主屏幕" hidden>+</button>
-      </header>
-
-      <section class="status-grid" aria-label="账户状态">
-        <article><span>模拟资金</span><strong id="equityValue">¥50,000</strong></article>
-        <article><span>总盈亏</span><strong id="pnlValue">¥0</strong></article>
-        <article><span>胜率</span><strong id="winRateValue">0%</strong></article>
-        <article><span>最大回撤</span><strong id="drawdownValue">0%</strong></article>
-      </section>
-
-      <section class="panel signal-panel">
-        <div class="section-title"><h2>系统反馈</h2><span id="marketMode">等待操作</span></div>
-        <div id="signalCard" class="signal-card neutral">
-          <div><span>当前状态</span><strong id="signalAction">免费保护模式已启用</strong></div>
-          <p id="signalReason">打开App不会自动访问云端；只有点击训练、同步、恢复或LINE提醒才会消耗Cloudflare/LINE额度。</p>
-        </div>
-      </section>
-
-      <section class="panel controls">
-        <div class="section-title"><h2>行情数据</h2><span id="dataStatus">0 根K线</span></div>
-        <div class="form-grid market-picker">
-          <label>品种<select id="symbolInput"><option value="NQ=F">纳指期货 NQ</option><option value="ES=F" selected>标普500期货 ES</option><option value="YM=F">道指期货 YM</option><option value="GC=F">黄金期货 GC</option><option value="CL=F">原油期货 CL</option><option value="NG=F">天然气期货 NG</option><option value="^N225">日经225指数</option></select></label>
-          <label>周期<select id="intervalInput"><option value="5m">5分钟</option><option value="15m" selected>15分钟</option><option value="30m">30分钟</option><option value="1h">1小时</option><option value="1d">日线</option></select></label>
-        </div>
-        <div class="button-row"><button id="fetchButton" type="button">获取行情</button><label class="file-button">导入CSV<input id="csvInput" type="file" accept=".csv,text/csv"></label></div>
-        <div class="button-row secondary-row"><button id="sampleButton" type="button">加载样本</button><button id="scanButton" type="button">扫描推荐</button></div>
-        <p class="hint">行情用于模拟研究，不是实盘下单依据。建议先用15分钟周期。</p>
-      </section>
-
-      <section class="panel">
-        <div class="section-title"><h2>风控参数</h2><button id="resetButton" class="text-button" type="button">重置模拟</button></div>
-        <div class="form-grid">
-          <label>初始资金<input id="capitalInput" type="number" min="10000" step="1000" value="50000"></label>
-          <label>单笔风险%<input id="riskInput" type="number" min="0.1" max="3" step="0.1" value="0.5"></label>
-          <label>日亏损上限%<input id="dailyLossInput" type="number" min="0.5" max="5" step="0.1" value="1"></label>
-          <label>最多持仓K线<input id="maxHoldInput" type="number" min="3" max="80" step="1" value="18"></label>
-        </div>
-      </section>
-
+      <header class="topbar"><div><p class="eyebrow">iPhone 期货/CFD风控参考</p><h1>AI 实盘参考</h1></div><button id="installButton" class="icon-button" type="button" title="安装到主屏幕" hidden>+</button></header>
+      <section class="status-grid" aria-label="账户状态"><article><span>模拟资金</span><strong id="equityValue">¥50,000</strong></article><article><span>总盈亏</span><strong id="pnlValue">¥0</strong></article><article><span>胜率</span><strong id="winRateValue">0%</strong></article><article><span>最大回撤</span><strong id="drawdownValue">0%</strong></article></section>
+      <section class="panel signal-panel"><div class="section-title"><h2>系统反馈</h2><span id="marketMode">等待操作</span></div><div id="signalCard" class="signal-card neutral"><div><span>当前状态</span><strong id="signalAction">免费保护模式已启用</strong></div><p id="signalReason">LINE提醒会给出方向、参考入场、止损、止盈/OCO；无信号时明确提示观望。</p></div></section>
+      <section class="panel controls"><div class="section-title"><h2>行情数据</h2><span id="dataStatus">0 根K线</span></div><div class="form-grid market-picker"><label>品种<select id="symbolInput"><option value="NQ=F">纳指期货 NQ</option><option value="ES=F" selected>标普500期货 ES</option><option value="YM=F">道指期货 YM</option><option value="GC=F">黄金期货 GC</option><option value="CL=F">原油期货 CL</option><option value="NG=F">天然气期货 NG</option><option value="^N225">日经225指数</option></select></label><label>周期<select id="intervalInput"><option value="5m">5分钟</option><option value="15m" selected>15分钟</option><option value="30m">30分钟</option><option value="1h">1小时</option><option value="1d">日线</option></select></label></div><div class="button-row"><button id="fetchButton" type="button">获取行情</button><label class="file-button">导入CSV<input id="csvInput" type="file" accept=".csv,text/csv"></label></div><div class="button-row secondary-row"><button id="sampleButton" type="button">加载样本</button><button id="scanButton" type="button">扫描推荐</button></div><p class="hint">行情用于策略参考。实盘前必须确认外貨EX CFD实际报价、点差和滑点。</p></section>
+      <section class="panel"><div class="section-title"><h2>风控参数</h2><button id="resetButton" class="text-button" type="button">重置模拟</button></div><div class="form-grid"><label>初始资金<input id="capitalInput" type="number" min="10000" step="1000" value="50000"></label><label>单笔风险%<input id="riskInput" type="number" min="0.1" max="3" step="0.1" value="0.5"></label><label>日亏损上限%<input id="dailyLossInput" type="number" min="0.5" max="5" step="0.1" value="1"></label><label>最多持仓K线<input id="maxHoldInput" type="number" min="3" max="80" step="1" value="18"></label></div></section>
       <section class="action-bar" aria-label="主要操作"><button id="runButton" type="button">运行模拟</button><button id="optimizeButton" type="button">自主学习</button></section>
-
-      <section class="panel">
-        <div class="section-title"><h2>模式</h2><span id="cloudStatus">免费保护模式</span></div>
-        <div class="button-row"><button id="trainingModeButton" type="button">训练模式</button><button id="followModeButton" type="button">AI跟单提醒</button></div>
-        <div class="button-row secondary-row"><button id="syncCloudButton" type="button">同步云端</button><button id="restoreCloudButton" type="button">恢复云端</button></div>
-        <p class="hint">训练模式会学习并云端备份；AI跟单提醒会从胜率前10里选择最高胜率策略，通过LINE推送。系统已限制每日使用次数，避免超出免费额度。</p>
-      </section>
-
-      <section class="panel">
-        <div class="section-title"><h2>全品种随机学习</h2><span id="learnCount">0 条记录</span></div>
-        <button id="randomLearnButton" class="wide-button" type="button">随机模拟并升级AI</button>
-        <p class="hint">此按钮只在本机训练并更新排行榜，不会自动同步云端。</p>
-        <div id="feedbackLog" class="feedback-log"><p class="empty">操作反馈会显示在这里。</p></div>
-      </section>
-
-      <section class="panel metrics">
-        <div class="section-title"><h2>模拟结果</h2><span id="tradeCount">0 笔</span></div>
-        <div class="metric-list"><div><span>净利润</span><strong id="netProfit">¥0</strong></div><div><span>平均R值</span><strong id="avgR">0.00</strong></div><div><span>盈亏比</span><strong id="profitFactor">0.00</strong></div><div><span>最佳参数</span><strong id="bestParams">暂无</strong></div></div>
-      </section>
-
+      <section class="panel"><div class="section-title"><h2>模式</h2><span id="cloudStatus">免费保护模式</span></div><div class="button-row"><button id="trainingModeButton" type="button">训练模式</button><button id="followModeButton" type="button">实盘参考LINE</button></div><div class="button-row secondary-row"><button id="syncCloudButton" type="button">同步云端</button><button id="restoreCloudButton" type="button">恢复云端</button></div><p class="hint">训练模式负责更新策略库；实盘参考LINE会从胜率前10里挑选策略，结合最新行情生成方向、入场、止损、止盈/OCO。</p></section>
+      <section class="panel"><div class="section-title"><h2>全品种随机学习</h2><span id="learnCount">0 条记录</span></div><button id="randomLearnButton" class="wide-button" type="button">随机模拟并升级AI</button><p class="hint">此按钮只在本机训练并更新排行榜，不会自动同步云端。</p><div id="feedbackLog" class="feedback-log"><p class="empty">操作反馈会显示在这里。</p></div></section>
+      <section class="panel metrics"><div class="section-title"><h2>模拟结果</h2><span id="tradeCount">0 笔</span></div><div class="metric-list"><div><span>净利润</span><strong id="netProfit">¥0</strong></div><div><span>平均R值</span><strong id="avgR">0.00</strong></div><div><span>盈亏比</span><strong id="profitFactor">0.00</strong></div><div><span>最佳参数</span><strong id="bestParams">暂无</strong></div></div></section>
       <section class="panel"><div class="section-title"><h2>胜率前10排行榜</h2><button id="clearBoardButton" class="text-button" type="button">清空榜单</button></div><div id="leaderboard" class="leaderboard"><p class="empty">还没有学习记录。</p></div></section>
       <section class="panel log-panel"><div class="section-title"><h2>交易日志</h2><button id="exportButton" class="text-button" type="button">导出</button></div><div id="tradeLog" class="trade-log"><p class="empty">还没有模拟交易。</p></div></section>
     </main>
-    <script src="app.js"></script>
-    <script src="cloud.js"></script>
+    <script src="app.js"></script><script src="cloud.js"></script>
   </body>
 </html>
