@@ -27,10 +27,10 @@
       </section>
 
       <section class="panel signal-panel">
-        <div class="section-title"><h2>系统判断</h2><span id="marketMode">等待行情</span></div>
+        <div class="section-title"><h2>系统反馈</h2><span id="marketMode">等待操作</span></div>
         <div id="signalCard" class="signal-card neutral">
-          <div><span>下一步</span><strong id="signalAction">获取行情或加载样本</strong></div>
-          <p id="signalReason">系统会用 EMA、RSI、ATR 和风控规则进行模拟交易，不连接真实账户。</p>
+          <div><span>当前状态</span><strong id="signalAction">获取行情或开始学习</strong></div>
+          <p id="signalReason">系统会自动模拟交易、记录结果、更新排行榜；不会连接真实账户。</p>
         </div>
       </section>
 
@@ -66,11 +66,11 @@
           <button id="sampleButton" type="button">加载样本</button>
           <button id="scanButton" type="button">扫描推荐</button>
         </div>
-        <p class="hint">行情用于模拟研究，不是实盘下单依据。CSV列名支持 time/open/high/low/close。</p>
+        <p class="hint">行情用于模拟研究，不是实盘下单依据。建议先用15分钟周期。</p>
       </section>
 
       <section class="panel">
-        <div class="section-title"><h2>风控参数</h2><button id="resetButton" class="text-button" type="button">重置</button></div>
+        <div class="section-title"><h2>风控参数</h2><button id="resetButton" class="text-button" type="button">重置模拟</button></div>
         <div class="form-grid">
           <label>初始资金<input id="capitalInput" type="number" min="10000" step="1000" value="50000"></label>
           <label>单笔风险%<input id="riskInput" type="number" min="0.1" max="3" step="0.1" value="0.5"></label>
@@ -84,6 +84,13 @@
         <button id="optimizeButton" type="button">自主学习</button>
       </section>
 
+      <section class="panel">
+        <div class="section-title"><h2>全品种随机学习</h2><span id="learnCount">0 条记录</span></div>
+        <button id="randomLearnButton" class="wide-button" type="button">随机模拟并升级AI</button>
+        <p class="hint">系统会对所有品种随机生成多组参数，分别模拟交易，保存结果，并更新胜率前10排行榜。</p>
+        <div id="feedbackLog" class="feedback-log"><p class="empty">操作反馈会显示在这里。</p></div>
+      </section>
+
       <section class="panel metrics">
         <div class="section-title"><h2>模拟结果</h2><span id="tradeCount">0 笔</span></div>
         <div class="metric-list">
@@ -92,6 +99,11 @@
           <div><span>盈亏比</span><strong id="profitFactor">0.00</strong></div>
           <div><span>最佳参数</span><strong id="bestParams">暂无</strong></div>
         </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title"><h2>胜率前10排行榜</h2><button id="clearBoardButton" class="text-button" type="button">清空榜单</button></div>
+        <div id="leaderboard" class="leaderboard"><p class="empty">还没有学习记录。</p></div>
       </section>
 
       <section class="panel log-panel">
