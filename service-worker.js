@@ -1,4 +1,4 @@
-const CACHE = "ai-paper-trader-v5";
+const CACHE = "ai-paper-trader-v6";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./cloud.js", "./manifest.webmanifest", "./icons/icon-192.svg", "./icons/icon-512.svg"];
 
 self.addEventListener("install", (event) => {
