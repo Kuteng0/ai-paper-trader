@@ -1,5 +1,5 @@
-const CACHE = "ai-paper-trader-v3";
-const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.webmanifest", "./icons/icon-192.svg", "./icons/icon-512.svg"];
+const CACHE = "ai-paper-trader-v4";
+const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./cloud.js", "./manifest.webmanifest", "./icons/icon-192.svg", "./icons/icon-512.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
