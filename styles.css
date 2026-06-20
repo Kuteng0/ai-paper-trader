@@ -237,7 +237,7 @@ label input, label select {
   overflow-wrap: anywhere;
 }
 
-.trade-log, .feedback-log, .leaderboard {
+.trade-log, .feedback-log, .leaderboard, .live-reference-log {
   display: grid;
   gap: 8px;
   max-height: 420px;
@@ -248,10 +248,30 @@ label input, label select {
   margin-top: 10px;
   max-height: 210px;
 }
-.feedback-item, .rank-item, .trade-item {
+.feedback-item, .rank-item, .trade-item, .live-reference-item {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-3);
+}
+.live-reference-log { max-height: 260px; }
+.live-reference-item {
+  padding: 10px;
+  border-left: 4px solid var(--yellow);
+}
+.live-reference-item.win { border-left-color: var(--green); }
+.live-reference-item.loss { border-left-color: var(--red); }
+.live-reference-item strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.25;
+}
+.live-reference-item span,
+.live-reference-item small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 3px;
 }
 .feedback-item {
   padding: 10px;

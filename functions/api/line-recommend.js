@@ -52,13 +52,25 @@ async function buildLivePlan(best) {
   const stopDistance = Math.max(ind.atr[i] * strategy.stopAtr, entry * 0.001);
   const atrNow = ind.atr[i];
   const trend = ind.emaFast[i] > ind.emaSlow[i] ? "偏多" : "偏空";
+  const currentRegime = marketRegime(candles);
+  const expectedRegime = best.regime || "unknown";
+  const regimeMismatch = expectedRegime !== "unknown" && currentRegime !== "unknown" && expectedRegime !== currentRegime;
+
+  if (regimeMismatch) {
+    return {
+      action: "wait",
+      actionText: "行情状态不匹配，观望",
+      reason: `该策略训练环境为${expectedRegime}，当前行情为${currentRegime}。为避免硬套策略，本次不下单。`,
+      entry, atr: atrNow, rsi: ind.rsi[i], trend, currentRegime
+    };
+  }
 
   if (!side) {
     return {
       action: "wait",
       actionText: "无明确信号，观望",
       reason: `当前${trend}，但没有出现策略入场信号。不为了交易而开仓。`,
-      entry, atr: atrNow, rsi: ind.rsi[i], trend
+      entry, atr: atrNow, rsi: ind.rsi[i], trend, currentRegime
     };
   }
 
@@ -69,7 +81,7 @@ async function buildLivePlan(best) {
     action: side,
     actionText: side === "long" ? "做多参考" : "做空参考",
     reason: `EMA交叉 + RSI过滤触发，当前${trend}。`,
-    entry, stop, target, atr: atrNow, rsi: ind.rsi[i], trend, invalidation
+    entry, stop, target, atr: atrNow, rsi: ind.rsi[i], trend, invalidation, currentRegime
   };
 }
 
@@ -113,6 +125,20 @@ function signalAt(i, candles, ind, strategy) {
   return null;
 }
 
+function marketRegime(candles) {
+  if (candles.length < 40) return "unknown";
+  const closes = candles.map((c) => c.close);
+  const fast = ema(closes, 10);
+  const slow = ema(closes, 30);
+  const atrValues = atr(candles, 14);
+  const i = candles.length - 1;
+  const atrPct = atrValues[i] / Math.max(1, closes[i]);
+  const slope = Math.abs(fast[i] - slow[i]) / Math.max(1, closes[i]);
+  if (atrPct > 0.018) return "volatile";
+  if (slope > 0.004) return fast[i] > slow[i] ? "trend-up" : "trend-down";
+  return "range";
+}
+
 function buildMessage(best, count, live) {
   const lines = [
     "AI实盘操作参考",
@@ -124,6 +150,7 @@ function buildMessage(best, count, live) {
     "",
     `当前建议：${live.actionText}`,
     `理由：${live.reason || "-"}`,
+    `当前行情状态：${live.currentRegime || "unknown"} / 策略状态：${best.regime || "unknown"}`,
     `参考价：${fmt(live.entry)} / ATR：${fmt(live.atr)} / RSI：${fmt(live.rsi)}`
   ];
 

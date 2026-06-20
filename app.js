@@ -429,6 +429,115 @@ function renderLeaderboard() {
   els.leaderboard.innerHTML = rows.length ? rows.map((r, i) => `<div class="rank-item"><div class="rank-no">${i + 1}</div><div class="rank-main"><strong>${r.label} / 等级 ${r.grade || "B"}</strong><span>${r.interval} / ${r.source} / ${r.time}</span><span>交易 ${r.trades} 笔，净利 ${money.format(r.netProfit)}，回撤 ${(r.maxDrawdown * 100).toFixed(1)}%，盈亏比 ${Number(r.profitFactor || 0).toFixed(2)}</span><span>综合分 ${Math.round(r.score || 0)}，参数 EMA ${r.strategy.fast}/${r.strategy.slow}，止损 ${r.strategy.stopAtr}ATR，止盈 ${r.strategy.takeProfitR}R</span></div><div class="rank-side"><span>正确率</span><strong>${pct(r.winRate)}</strong></div></div>`).join("") : `<p class="empty">还没有通过稳健过滤的学习记录。</p>`;
 }
 
+function marketRegime(candles) {
+  if (candles.length < 40) return "unknown";
+  const closes = candles.map((c) => c.close);
+  const fast = ema(closes, 10);
+  const slow = ema(closes, 30);
+  const atrValues = atr(candles, 14);
+  const i = candles.length - 1;
+  const atrPct = atrValues[i] / Math.max(1, closes[i]);
+  const slope = Math.abs(fast[i] - slow[i]) / Math.max(1, closes[i]);
+  if (atrPct > 0.018) return "volatile";
+  if (slope > 0.004) return fast[i] > slow[i] ? "trend-up" : "trend-down";
+  return "range";
+}
+
+function mutateStrategy(strategy) {
+  const fast = clampInt(strategy.fast + randomInt(-2, 2), 4, 18);
+  const slow = clampInt(strategy.slow + randomInt(-5, 5), fast + 4, 60);
+  return {
+    fast,
+    slow,
+    rsiFloor: clampInt((strategy.rsiFloor || 42) + randomInt(-4, 4), 30, 50),
+    rsiCeil: clampInt((strategy.rsiCeil || 58) + randomInt(-4, 4), 50, 70),
+    stopAtr: clampFloat((strategy.stopAtr || 1.4) + randomFloat(-0.3, 0.3), 0.8, 2.6),
+    takeProfitR: clampFloat((strategy.takeProfitR || 1.8) + randomFloat(-0.4, 0.4), 1.0, 3.2)
+  };
+}
+
+function clampInt(value, min, max) {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function clampFloat(value, min, max) {
+  return Math.round(Math.max(min, Math.min(max, value)) * 10) / 10;
+}
+
+function seededStrategies(symbol, interval) {
+  const seeds = state.learning
+    .filter((record) => record.symbol === symbol && record.interval === interval && record.strategy && record.grade !== "C")
+    .sort((a, b) => (b.score || 0) - (a.score || 0))
+    .slice(0, 5);
+  const variants = [];
+  for (const seed of seeds) {
+    variants.push(seed.strategy);
+    for (let i = 0; i < 4; i++) variants.push(mutateStrategy(seed.strategy));
+  }
+  return variants;
+}
+
+async function randomLearnAllMarkets() {
+  const interval = els.intervalInput.value;
+  const cfg = settings();
+  const allResults = [];
+  setBusy(true);
+  addFeedback("开始进化训练：优秀策略变体 + 随机参数 + Walk-Forward 验证。", true);
+  try {
+    for (const symbol of SYMBOLS) {
+      addFeedback(`正在训练 ${instruments[symbol].name} ${interval}...`);
+      const data = await fetchHistory(symbol, interval);
+      const regime = marketRegime(data.candles);
+      let bestForSymbol = null;
+      const strategies = [
+        defaultStrategy,
+        ...seededStrategies(symbol, interval),
+        ...Array.from({ length: 24 }, randomStrategy)
+      ];
+      const unique = new Map(strategies.map((strategy) => [`${strategy.fast}-${strategy.slow}-${strategy.rsiFloor}-${strategy.rsiCeil}-${strategy.stopAtr}-${strategy.takeProfitR}`, strategy]));
+      for (const strategy of unique.values()) {
+        const evaluation = evaluateStrategy(data.candles, cfg, strategy);
+        const result = evaluation.result;
+        if (result.trades.length < MIN_LEARNING_TRADES || evaluation.grade === "C") continue;
+        const record = makeRecord(symbol, interval, result, strategy, "进化训练");
+        record.score = evaluation.score;
+        record.grade = evaluation.grade;
+        record.regime = regime;
+        saveLearningRecord(record);
+        const scored = { symbol, data, result, strategy, record, score: evaluation.score, grade: evaluation.grade, regime };
+        allResults.push(scored);
+        if (!bestForSymbol || scored.score > bestForSymbol.score) bestForSymbol = scored;
+      }
+      if (bestForSymbol) {
+        addFeedback(`${data.label} 完成：行情 ${regime}，等级 ${bestForSymbol.grade}，正确率 ${pct(bestForSymbol.result.winRate)}，交易 ${bestForSymbol.result.trades.length} 笔。`);
+      } else {
+        addFeedback(`${data.label} 完成：行情 ${regime}，未通过稳健过滤。`);
+      }
+      renderLeaderboard();
+    }
+    if (!allResults.length) throw new Error("本轮没有策略通过稳健过滤。可以换周期，或先积累更多行情。");
+    const best = allResults.sort((a, b) => b.score - a.score)[0];
+    state.candles = best.data.candles;
+    state.best = { strategy: best.strategy, trainResult: best.result, testResult: best.result, score: best.score, grade: best.grade, regime: best.regime };
+    localStorage.setItem("paperTrader.best", JSON.stringify(state.best));
+    saveTrades(best.result.trades);
+    els.symbolInput.value = best.symbol;
+    render(best.result);
+    addFeedback(`训练完成：采用 ${best.data.label} 等级 ${best.grade} 策略，行情 ${best.regime}，正确率 ${pct(best.result.winRate)}。`, true);
+  } catch (error) {
+    showError(error);
+    addFeedback(`训练失败：${error.message || error}`, true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderLeaderboard() {
+  els.learnCount.textContent = `${state.learning.length} 条记录`;
+  const rows = topRecords();
+  els.leaderboard.innerHTML = rows.length ? rows.map((r, i) => `<div class="rank-item"><div class="rank-no">${i + 1}</div><div class="rank-main"><strong>${r.label} / 等级 ${r.grade || "B"}</strong><span>${r.interval} / ${r.source} / 行情 ${r.regime || "unknown"} / ${r.time}</span><span>交易 ${r.trades} 笔，净利 ${money.format(r.netProfit)}，回撤 ${(r.maxDrawdown * 100).toFixed(1)}%，盈亏比 ${Number(r.profitFactor || 0).toFixed(2)}</span><span>综合分 ${Math.round(r.score || 0)}，参数 EMA ${r.strategy.fast}/${r.strategy.slow}，止损 ${r.strategy.stopAtr}ATR，止盈 ${r.strategy.takeProfitR}R</span></div><div class="rank-side"><span>正确率</span><strong>${pct(r.winRate)}</strong></div></div>`).join("") : `<p class="empty">还没有通过稳健过滤的学习记录。</p>`;
+}
+
 function saveTrades(trades) { state.trades = trades; localStorage.setItem("paperTrader.trades", JSON.stringify(trades)); }
 function showError(error) { els.signalCard.className = "signal-card neutral"; els.signalAction.textContent = "操作失败"; els.signalReason.textContent = error.message || String(error); }
 

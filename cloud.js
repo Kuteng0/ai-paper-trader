@@ -67,6 +67,50 @@ function liveRefs() {
 
 function saveLiveRefs(records) {
   localStorage.setItem(LIVE_REFS_KEY, JSON.stringify(records.slice(-80)));
+  renderLiveReferenceLog();
+}
+
+function ensureLiveReferencePanel() {
+  if (document.getElementById("liveReferenceLog")) return;
+  const learningPanel = document.querySelector(".learning-panel");
+  if (!learningPanel) return;
+  const panel = document.createElement("section");
+  panel.className = "panel live-reference-panel";
+  panel.innerHTML = `
+    <div class="section-title">
+      <div>
+        <p class="section-kicker">实盘参考追踪</p>
+        <h2>LINE建议结果</h2>
+      </div>
+      <span id="liveReferenceStats">0 条</span>
+    </div>
+    <div id="liveReferenceLog" class="live-reference-log"><p class="empty">还没有可追踪的实盘参考。</p></div>
+  `;
+  learningPanel.insertAdjacentElement("afterend", panel);
+}
+
+function renderLiveReferenceLog() {
+  ensureLiveReferencePanel();
+  const log = document.getElementById("liveReferenceLog");
+  const stats = document.getElementById("liveReferenceStats");
+  if (!log || !stats) return;
+  const records = liveRefs().slice().reverse();
+  const closed = records.filter((record) => record.status === "win" || record.status === "loss");
+  const wins = closed.filter((record) => record.status === "win").length;
+  stats.textContent = closed.length ? `正确率 ${Math.round(wins / closed.length * 100)}%` : `${records.length} 条`;
+  log.innerHTML = records.length ? records.slice(0, 20).map((record) => `
+    <div class="live-reference-item ${record.status}">
+      <div>
+        <strong>${record.label} / ${record.action === "long" ? "做多" : "做空"} / ${record.status === "pending" ? "追踪中" : record.status === "win" ? "止盈" : "止损"}</strong>
+        <span>${new Date(record.createdAt).toLocaleString("ja-JP")} / 等级 ${record.grade || "B"} / 正确率 ${Math.round((record.winRate || 0) * 100)}%</span>
+        <small>入场 ${fmtLive(record.entry)} / 止损 ${fmtLive(record.stop)} / 止盈 ${fmtLive(record.target)}</small>
+      </div>
+    </div>
+  `).join("") : `<p class="empty">还没有可追踪的实盘参考。</p>`;
+}
+
+function fmtLive(value) {
+  return Number.isFinite(value) ? Number(value).toFixed(2) : "-";
 }
 
 function saveLiveReference(data) {
@@ -131,4 +175,5 @@ function bindCloudButtons() {
 
 bindCloudButtons();
 checkLiveReferenceOutcomes().catch(() => {});
+renderLiveReferenceLog();
 addFeedback("免费保护模式已启用：打开App不自动读取云端；只有点击按钮才会消耗Cloudflare/LINE额度。", true);
