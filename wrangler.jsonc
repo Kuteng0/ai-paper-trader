@@ -1,5 +1,11 @@
 {
   "name": "ai-paper-trader",
   "compatibility_date": "2026-06-20",
-  "pages_build_output_dir": "."
+  "pages_build_output_dir": ".",
+  "kv_namespaces": [
+    {
+      "binding": "LEARNING_KV",
+      "id": "04ee106096ca41bdbad168206d3acfbb"
+    }
+  ]
 }
