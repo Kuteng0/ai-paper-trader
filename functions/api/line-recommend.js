@@ -8,14 +8,15 @@ export async function onRequestPost({ env }) {
 
   const records = await env.LEARNING_KV.get(KEY, "json") || [];
   const top10 = records
-    .filter((r) => r && r.trades >= 3 && Number.isFinite(r.winRate))
+    .filter((r) => r && r.trades >= 3 && Number.isFinite(r.winRate) && r.strategy)
     .sort((a, b) => (b.winRate - a.winRate) || (b.trades - a.trades) || (b.profitFactor - a.profitFactor) || (b.netProfit - a.netProfit))
     .slice(0, 10);
 
   if (!top10.length) return json({ error: "排行榜还没有可用策略。请先运行训练模式。" }, 400);
 
   const best = top10[0];
-  const text = buildMessage(best, top10.length);
+  const live = await buildLivePlan(best);
+  const text = buildMessage(best, top10.length, live);
   const response = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
@@ -33,30 +34,116 @@ export async function onRequestPost({ env }) {
     return json({ error: `LINE推送失败：${response.status} ${detail}` }, 502);
   }
 
-  return json({ message: `LINE已发送：${best.label}，胜率 ${pct(best.winRate)}。`, selected: best });
+  return json({ message: `LINE已发送：${best.label}，${live.actionText}。`, selected: best, live });
 }
 
-function buildMessage(best, count) {
-  return [
-    "AI模拟交易提醒",
-    `从胜率前${count}策略中选择：${best.label}`,
-    `周期：${best.interval}`,
-    `胜率：${pct(best.winRate)} / 交易：${best.trades}笔`,
-    `净利润：${yen(best.netProfit)} / 最大回撤：${(best.maxDrawdown * 100).toFixed(1)}%`,
-    `盈亏比：${Number(best.profitFactor || 0).toFixed(2)} / 平均R：${Number(best.avgR || 0).toFixed(2)}`,
+async function buildLivePlan(best) {
+  const candles = await fetchCandles(best.symbol, best.interval || "15m");
+  if (candles.length < 80) return { action: "wait", actionText: "行情不足，观望", reason: "最新K线数量不足，不能计算可靠信号。" };
+
+  const strategy = best.strategy;
+  const ind = indicators(candles, strategy);
+  const i = candles.length - 1;
+  const side = signalAt(i, candles, ind, strategy);
+  const latest = candles[i];
+  const entry = latest.close;
+  const stopDistance = Math.max(ind.atr[i] * strategy.stopAtr, entry * 0.001);
+  const atrNow = ind.atr[i];
+  const trend = ind.emaFast[i] > ind.emaSlow[i] ? "偏多" : "偏空";
+
+  if (!side) {
+    return {
+      action: "wait",
+      actionText: "无明确信号，观望",
+      reason: `当前${trend}，但没有出现策略入场信号。不要为了交易而开仓。`,
+      entry, atr: atrNow, rsi: ind.rsi[i], trend
+    };
+  }
+
+  const stop = side === "long" ? entry - stopDistance : entry + stopDistance;
+  const target = side === "long" ? entry + stopDistance * strategy.takeProfitR : entry - stopDistance * strategy.takeProfitR;
+  const invalidation = side === "long" ? "跌破止损价立即退出" : "突破止损价立即退出";
+  return {
+    action: side,
+    actionText: side === "long" ? "做多参考" : "做空参考",
+    reason: `EMA交叉 + RSI过滤触发，当前${trend}。`,
+    entry, stop, target, atr: atrNow, rsi: ind.rsi[i], trend, invalidation
+  };
+}
+
+async function fetchCandles(symbol, interval) {
+  const range = "60d";
+  const endpoint = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
+  endpoint.searchParams.set("range", range);
+  endpoint.searchParams.set("interval", interval);
+  endpoint.searchParams.set("includePrePost", "true");
+  const response = await fetch(endpoint.toString(), { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error("最新行情获取失败，无法生成实盘参考。");
+  const payload = await response.json();
+  const result = payload.chart?.result?.[0];
+  const quote = result?.indicators?.quote?.[0];
+  const timestamps = result?.timestamp || [];
+  if (!quote || !timestamps.length) throw new Error("最新行情为空，无法生成实盘参考。");
+  return timestamps.map((ts, i) => ({
+    time: new Date(ts * 1000).toISOString().replace("T", " ").slice(0, 16),
+    open: round(quote.open?.[i]), high: round(quote.high?.[i]), low: round(quote.low?.[i]), close: round(quote.close?.[i])
+  })).filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite));
+}
+
+function indicators(candles, strategy) {
+  const closes = candles.map((c) => c.close);
+  return { emaFast: ema(closes, strategy.fast), emaSlow: ema(closes, strategy.slow), rsi: rsi(closes, 14), atr: atr(candles, 14) };
+}
+function ema(values, period) { const k = 2 / (period + 1); const out = []; values.forEach((v, i) => out[i] = i === 0 ? v : v * k + out[i - 1] * (1 - k)); return out; }
+function rsi(values, period) {
+  const out = Array(values.length).fill(50); let gains = 0, losses = 0;
+  for (let i = 1; i < values.length; i++) { const change = values[i] - values[i - 1], gain = Math.max(0, change), loss = Math.max(0, -change); if (i <= period) { gains += gain; losses += loss; } else { gains = (gains * (period - 1) + gain) / period; losses = (losses * (period - 1) + loss) / period; const rs = losses === 0 ? 100 : gains / losses; out[i] = 100 - 100 / (1 + rs); } }
+  return out;
+}
+function atr(candles, period) {
+  const tr = candles.map((c, i) => i === 0 ? c.high - c.low : Math.max(c.high - c.low, Math.abs(c.high - candles[i - 1].close), Math.abs(c.low - candles[i - 1].close)));
+  return ema(tr, period);
+}
+function signalAt(i, candles, ind, strategy) {
+  if (i < Math.max(strategy.slow, 20)) return null;
+  const prevFast = ind.emaFast[i - 1], prevSlow = ind.emaSlow[i - 1], fast = ind.emaFast[i], slow = ind.emaSlow[i], momentum = candles[i].close - candles[i - 3].close;
+  if (prevFast <= prevSlow && fast > slow && ind.rsi[i] >= strategy.rsiCeil && momentum > 0) return "long";
+  if (prevFast >= prevSlow && fast < slow && ind.rsi[i] <= strategy.rsiFloor && momentum < 0) return "short";
+  return null;
+}
+
+function buildMessage(best, count, live) {
+  const lines = [
+    "AI实盘操作参考",
+    `策略来源：胜率前${count}第1名 ${best.label}`,
+    `周期：${best.interval} / 历史胜率：${pct(best.winRate)} / 交易：${best.trades}笔`,
+    `历史净利：${yen(best.netProfit)} / 回撤：${(best.maxDrawdown * 100).toFixed(1)}% / 盈亏比：${Number(best.profitFactor || 0).toFixed(2)}`,
     `参数：EMA ${best.strategy.fast}/${best.strategy.slow}, 止损 ${best.strategy.stopAtr}ATR, 止盈 ${best.strategy.takeProfitR}R`,
-    "注意：这是模拟策略提醒，不是实盘下单指令。实盘必须自行确认并设置止损/OCO。"
-  ].join("\n");
+    "",
+    `当前建议：${live.actionText}`,
+    `理由：${live.reason || "-"}`,
+    `参考价：${fmt(live.entry)} / ATR：${fmt(live.atr)} / RSI：${fmt(live.rsi)}`
+  ];
+
+  if (live.action === "long" || live.action === "short") {
+    lines.push(
+      `参考入场：${fmt(live.entry)}`,
+      `止损价：${fmt(live.stop)}`,
+      `止盈价：${fmt(live.target)}`,
+      `OCO设置：入场后立刻设置 止损 ${fmt(live.stop)} + 止盈 ${fmt(live.target)}`,
+      `失效条件：${live.invalidation}`,
+      "仓位：按单笔风险0.3%-0.5%计算；不允许亏损加仓。"
+    );
+  } else {
+    lines.push("操作：不下单，等待下一次提醒。不要追单。");
+  }
+
+  lines.push("注意：这是实盘操作参考，不是保证盈利。下单前必须确认外貨EX CFD报价、点差、滑点，并设置止损/OCO。");
+  return lines.join("\n");
 }
 
-function pct(value) {
-  return `${Math.round(value * 100)}%`;
-}
-
-function yen(value) {
-  return new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(value || 0);
-}
-
-function json(body, status = 200) {
-  return Response.json(body, { status, headers: { "Access-Control-Allow-Origin": "*" } });
-}
+function pct(value) { return `${Math.round(value * 100)}%`; }
+function yen(value) { return new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(value || 0); }
+function fmt(value) { return Number.isFinite(value) ? Number(value).toFixed(2) : "-"; }
+function round(value) { return Number.isFinite(value) ? Math.round(value * 100) / 100 : null; }
+function json(body, status = 200) { return Response.json(body, { status, headers: { "Access-Control-Allow-Origin": "*" } }); }
