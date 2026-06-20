@@ -1,9 +1,13 @@
 "use strict";
 
+const SYMBOLS = ["ES=F", "NQ=F", "GC=F", "CL=F", "^N225", "YM=F", "NG=F"];
+
 const state = {
   candles: [],
   trades: JSON.parse(localStorage.getItem("paperTrader.trades") || "[]"),
   best: JSON.parse(localStorage.getItem("paperTrader.best") || "null"),
+  learning: JSON.parse(localStorage.getItem("paperTrader.learning") || "[]"),
+  feedback: [],
   deferredPrompt: null
 };
 
@@ -14,7 +18,9 @@ const els = {
   marketMode: $("marketMode"), signalCard: $("signalCard"), signalAction: $("signalAction"), signalReason: $("signalReason"), dataStatus: $("dataStatus"),
   symbolInput: $("symbolInput"), intervalInput: $("intervalInput"), fetchButton: $("fetchButton"), csvInput: $("csvInput"), sampleButton: $("sampleButton"), scanButton: $("scanButton"),
   capitalInput: $("capitalInput"), riskInput: $("riskInput"), dailyLossInput: $("dailyLossInput"), maxHoldInput: $("maxHoldInput"), resetButton: $("resetButton"),
-  runButton: $("runButton"), optimizeButton: $("optimizeButton"), tradeCount: $("tradeCount"), netProfit: $("netProfit"), avgR: $("avgR"), profitFactor: $("profitFactor"), bestParams: $("bestParams"), tradeLog: $("tradeLog"), exportButton: $("exportButton")
+  runButton: $("runButton"), optimizeButton: $("optimizeButton"), randomLearnButton: $("randomLearnButton"), learnCount: $("learnCount"), feedbackLog: $("feedbackLog"),
+  tradeCount: $("tradeCount"), netProfit: $("netProfit"), avgR: $("avgR"), profitFactor: $("profitFactor"), bestParams: $("bestParams"), leaderboard: $("leaderboard"), clearBoardButton: $("clearBoardButton"),
+  tradeLog: $("tradeLog"), exportButton: $("exportButton")
 };
 
 const instruments = {
@@ -117,9 +123,77 @@ function optimize() {
   const split = Math.floor(state.candles.length * 0.7), train = state.candles.slice(0, split), test = state.candles.slice(split - 40), grid = [];
   for (const fast of [5, 8, 12]) for (const slow of [18, 21, 34]) if (fast < slow) for (const stopAtr of [1.1, 1.4, 1.8]) for (const takeProfitR of [1.3, 1.8, 2.2]) grid.push({ fast, slow, rsiFloor: 42, rsiCeil: 58, stopAtr, takeProfitR });
   const cfg = settings();
-  const scored = grid.map((strategy) => { const trainResult = runSimulation(train, { ...cfg, strategy }), testResult = runSimulation(test, { ...cfg, strategy }); return { strategy, trainResult, testResult, score: testResult.netProfit - testResult.maxDrawdown * cfg.capital * 1.5 + testResult.avgR * 300 }; }).filter((x) => x.testResult.trades.length >= 3).sort((a, b) => b.score - a.score);
+  const scored = grid.map((strategy) => { const trainResult = runSimulation(train, { ...cfg, strategy }), testResult = runSimulation(test, { ...cfg, strategy }); return { strategy, trainResult, testResult, score: scoreResult(testResult, cfg.capital) }; }).filter((x) => x.testResult.trades.length >= 3).sort((a, b) => b.score - a.score);
   if (!scored.length) throw new Error("没有找到交易次数足够的参数组合。请换更长周期或其他品种。");
   state.best = scored[0]; localStorage.setItem("paperTrader.best", JSON.stringify(state.best)); return state.best;
+}
+
+function randomStrategy() {
+  const fast = randomInt(4, 16);
+  const slow = randomInt(Math.max(18, fast + 4), 55);
+  return { fast, slow, rsiFloor: randomInt(35, 48), rsiCeil: randomInt(52, 65), stopAtr: randomFloat(0.9, 2.4), takeProfitR: randomFloat(1.1, 3.0) };
+}
+function randomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function randomFloat(min, max) { return Math.round((min + Math.random() * (max - min)) * 10) / 10; }
+function scoreResult(result, capital) { return result.winRate * 1000 + result.profitFactor * 80 + result.avgR * 120 + result.netProfit / Math.max(1, capital) * 500 - result.maxDrawdown * 700; }
+
+function makeRecord(symbol, interval, result, strategy, source) {
+  return { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, time: new Date().toLocaleString("ja-JP"), symbol, label: instruments[symbol]?.name || symbol, interval, source, trades: result.trades.length, winRate: result.winRate, netProfit: result.netProfit, maxDrawdown: result.maxDrawdown, profitFactor: result.profitFactor, avgR: result.avgR, strategy };
+}
+function saveLearningRecord(record) {
+  if (record.trades < 3) return;
+  state.learning.push(record);
+  state.learning = state.learning.slice(-300);
+  localStorage.setItem("paperTrader.learning", JSON.stringify(state.learning));
+}
+function topRecords() {
+  return state.learning.slice().filter((r) => r.trades >= 3).sort((a, b) => (b.winRate - a.winRate) || (b.trades - a.trades) || (b.profitFactor - a.profitFactor) || (b.netProfit - a.netProfit)).slice(0, 10);
+}
+
+async function randomLearnAllMarkets() {
+  const interval = els.intervalInput.value;
+  const cfg = settings();
+  const allResults = [];
+  setBusy(true);
+  addFeedback("开始全品种随机学习：系统会逐个品种获取行情并测试随机参数。", true);
+  try {
+    for (const symbol of SYMBOLS) {
+      addFeedback(`正在获取 ${instruments[symbol].name} 的${interval}行情...`);
+      const data = await fetchHistory(symbol, interval);
+      let bestForSymbol = null;
+      const strategies = [defaultStrategy, ...Array.from({ length: 14 }, randomStrategy)];
+      addFeedback(`${data.label} 已取得 ${data.candles.length} 根K线，开始随机模拟 ${strategies.length} 组参数。`);
+      for (const strategy of strategies) {
+        const result = runSimulation(data.candles, { ...cfg, strategy });
+        if (result.trades.length < 3) continue;
+        const record = makeRecord(symbol, interval, result, strategy, "随机学习");
+        saveLearningRecord(record);
+        const scored = { symbol, data, result, strategy, record, score: scoreResult(result, cfg.capital) };
+        allResults.push(scored);
+        if (!bestForSymbol || scored.score > bestForSymbol.score) bestForSymbol = scored;
+      }
+      if (bestForSymbol) {
+        addFeedback(`${data.label} 完成：最佳胜率 ${pct(bestForSymbol.result.winRate)}，交易 ${bestForSymbol.result.trades.length} 笔，净利 ${money.format(bestForSymbol.result.netProfit)}。`);
+      } else {
+        addFeedback(`${data.label} 完成：本轮交易次数不足，未计入排行榜。`);
+      }
+      renderLeaderboard();
+    }
+    if (!allResults.length) throw new Error("本轮没有产生足够交易次数的模拟结果。");
+    const best = allResults.sort((a, b) => b.score - a.score)[0];
+    state.candles = best.data.candles;
+    state.best = { strategy: best.strategy, trainResult: best.result, testResult: best.result, score: best.score };
+    localStorage.setItem("paperTrader.best", JSON.stringify(state.best));
+    saveTrades(best.result.trades);
+    els.symbolInput.value = best.symbol;
+    render(best.result);
+    addFeedback(`学习完成：当前采用 ${best.data.label} 的最佳参数，胜率 ${pct(best.result.winRate)}，排行榜已更新。`, true);
+  } catch (error) {
+    showError(error);
+    addFeedback(`学习失败：${error.message || error}`, true);
+  } finally {
+    setBusy(false);
+  }
 }
 
 function makeSampleCandles() {
@@ -128,6 +202,7 @@ function makeSampleCandles() {
   return candles;
 }
 function round(v) { return Math.round(v * 10) / 10; }
+function pct(value) { return `${Math.round(value * 100)}%`; }
 
 function updateSignal() {
   if (!state.candles.length) return;
@@ -140,32 +215,68 @@ function updateSignal() {
 
 function render(result = null) {
   const capital = Number(els.capitalInput.value) || 50000, trades = result?.trades || state.trades, pnl = trades.reduce((s, t) => s + t.pnl, 0), wins = trades.filter((t) => t.pnl > 0).length, winRate = trades.length ? wins / trades.length : 0, maxDrawdown = result?.maxDrawdown || 0, avgR = trades.length ? trades.reduce((s, t) => s + t.rValue, 0) / trades.length : 0, grossWin = trades.filter((t) => t.pnl > 0).reduce((s, t) => s + t.pnl, 0), grossLoss = Math.abs(trades.filter((t) => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0));
-  els.equityValue.textContent = money.format(capital + pnl); els.pnlValue.textContent = money.format(pnl); els.pnlValue.style.color = pnl >= 0 ? "var(--green)" : "var(--red)"; els.winRateValue.textContent = `${Math.round(winRate * 100)}%`; els.drawdownValue.textContent = `${(maxDrawdown * 100).toFixed(1)}%`; els.dataStatus.textContent = `${state.candles.length} 根K线`; els.tradeCount.textContent = `${trades.length} 笔`; els.netProfit.textContent = money.format(pnl); els.avgR.textContent = avgR.toFixed(2); els.profitFactor.textContent = (grossLoss ? grossWin / grossLoss : grossWin ? 99 : 0).toFixed(2); els.bestParams.textContent = state.best ? `EMA ${state.best.strategy.fast}/${state.best.strategy.slow}, 止损 ${state.best.strategy.stopAtr}ATR` : "暂无";
+  els.equityValue.textContent = money.format(capital + pnl); els.pnlValue.textContent = money.format(pnl); els.pnlValue.style.color = pnl >= 0 ? "var(--green)" : "var(--red)"; els.winRateValue.textContent = pct(winRate); els.drawdownValue.textContent = `${(maxDrawdown * 100).toFixed(1)}%`; els.dataStatus.textContent = `${state.candles.length} 根K线`; els.tradeCount.textContent = `${trades.length} 笔`; els.netProfit.textContent = money.format(pnl); els.avgR.textContent = avgR.toFixed(2); els.profitFactor.textContent = (grossLoss ? grossWin / grossLoss : grossWin ? 99 : 0).toFixed(2); els.bestParams.textContent = state.best ? `EMA ${state.best.strategy.fast}/${state.best.strategy.slow}, 止损 ${state.best.strategy.stopAtr}ATR` : "暂无";
   els.tradeLog.innerHTML = trades.length ? trades.slice().reverse().slice(0, 60).map((t) => `<div class="trade-item"><div><strong>${t.side === "long" ? "做多" : "做空"} ${t.reason}</strong><span>${t.entryTime} 至 ${t.exitTime}</span><small>入场 ${t.entry.toFixed(1)} / 出场 ${t.exit.toFixed(1)} / 数量 ${t.quantity}</small></div><strong class="${t.pnl >= 0 ? "profit" : "loss"}">${money.format(t.pnl)}</strong></div>`).join("") : `<p class="empty">还没有模拟交易。</p>`;
+  renderLeaderboard();
   updateSignal();
 }
 
-async function loadSelectedHistory() { const symbol = els.symbolInput.value, interval = els.intervalInput.value; els.signalAction.textContent = "正在获取行情"; els.signalReason.textContent = "Cloudflare正在请求历史K线。"; const data = await fetchHistory(symbol, interval); state.candles = data.candles; els.signalAction.textContent = `${data.label} 已加载`; els.signalReason.textContent = `${data.interval} / ${data.range}，共 ${data.candles.length} 根K线。${instruments[symbol]?.profile || ""}`; render(); }
-async function scanMarkets() {
-  els.signalAction.textContent = "正在扫描品种"; els.signalReason.textContent = "系统会获取行情、优化参数，并按测试段表现排序。";
-  const interval = els.intervalInput.value, symbols = ["ES=F", "NQ=F", "GC=F", "CL=F", "^N225", "YM=F", "NG=F"], cfg = settings(), results = [];
-  for (const symbol of symbols) { try { const data = await fetchHistory(symbol, interval), prevCandles = state.candles, prevBest = state.best; state.candles = data.candles; const best = optimize(), result = runSimulation(data.candles, { ...cfg, strategy: best.strategy }); results.push({ symbol, label: data.label, result, best }); state.candles = prevCandles; state.best = prevBest; } catch (error) { results.push({ symbol, label: instruments[symbol]?.name || symbol, error: error.message }); } }
-  const ranked = results.filter((x) => x.result && x.result.trades.length >= 5).sort((a, b) => (b.result.netProfit - b.result.maxDrawdown * cfg.capital * 2 + b.result.profitFactor * 100) - (a.result.netProfit - a.result.maxDrawdown * cfg.capital * 2 + a.result.profitFactor * 100));
-  if (!ranked.length) throw new Error("本轮扫描没有找到交易次数足够的品种。");
-  const top = ranked[0]; els.symbolInput.value = top.symbol; state.candles = (await fetchHistory(top.symbol, interval)).candles; state.best = top.best; localStorage.setItem("paperTrader.best", JSON.stringify(state.best)); const finalResult = runSimulation(state.candles, { ...cfg, strategy: top.best.strategy }); saveTrades(finalResult.trades); els.signalAction.textContent = `当前推荐：${top.label}`; els.signalReason.textContent = ranked.slice(0, 3).map((x, i) => `${i + 1}. ${x.label} 净利 ${money.format(x.result.netProfit)} 胜率 ${Math.round(x.result.winRate * 100)}% 回撤 ${(x.result.maxDrawdown * 100).toFixed(1)}%`).join(" / "); render(finalResult);
+function renderLeaderboard() {
+  els.learnCount.textContent = `${state.learning.length} 条记录`;
+  const rows = topRecords();
+  els.leaderboard.innerHTML = rows.length ? rows.map((r, i) => `<div class="rank-item"><div class="rank-no">${i + 1}</div><div class="rank-main"><strong>${r.label}</strong><span>${r.interval} / ${r.source} / ${r.time}</span><span>交易 ${r.trades} 笔，净利 ${money.format(r.netProfit)}，回撤 ${(r.maxDrawdown * 100).toFixed(1)}%，盈亏比 ${r.profitFactor.toFixed(2)}</span><span>参数 EMA ${r.strategy.fast}/${r.strategy.slow}，止损 ${r.strategy.stopAtr}ATR，止盈 ${r.strategy.takeProfitR}R</span></div><div class="rank-side"><span>胜率</span><strong>${pct(r.winRate)}</strong></div></div>`).join("") : `<p class="empty">还没有学习记录。</p>`;
 }
+
+function addFeedback(message, important = false) {
+  state.feedback.unshift({ time: new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" }), message, important });
+  state.feedback = state.feedback.slice(0, 20);
+  els.feedbackLog.innerHTML = state.feedback.map((item) => `<div class="feedback-item">${item.time} ${item.important ? "【完成】" : ""}${item.message}</div>`).join("");
+  els.signalAction.textContent = message;
+  els.signalReason.textContent = "详细过程已记录在操作反馈中。";
+}
+function setBusy(isBusy) {
+  [els.fetchButton, els.sampleButton, els.scanButton, els.runButton, els.optimizeButton, els.randomLearnButton].forEach((btn) => { if (btn) btn.disabled = isBusy; });
+}
+
+async function loadSelectedHistory() {
+  const symbol = els.symbolInput.value, interval = els.intervalInput.value;
+  setBusy(true); addFeedback(`正在获取 ${instruments[symbol].name} 的${interval}行情...`);
+  try { const data = await fetchHistory(symbol, interval); state.candles = data.candles; addFeedback(`${data.label} 已加载，共 ${data.candles.length} 根K线。${instruments[symbol]?.profile || ""}`, true); render(); }
+  catch (error) { showError(error); addFeedback(`获取失败：${error.message || error}`, true); }
+  finally { setBusy(false); }
+}
+
+async function scanMarkets() {
+  setBusy(true); addFeedback("开始扫描推荐：逐个品种获取行情并进行参数优化。", true);
+  const interval = els.intervalInput.value, cfg = settings(), results = [];
+  try {
+    for (const symbol of SYMBOLS) {
+      addFeedback(`扫描 ${instruments[symbol].name}...`);
+      try { const data = await fetchHistory(symbol, interval), prevCandles = state.candles, prevBest = state.best; state.candles = data.candles; const best = optimize(), result = runSimulation(data.candles, { ...cfg, strategy: best.strategy }); const record = makeRecord(symbol, interval, result, best.strategy, "扫描推荐"); saveLearningRecord(record); results.push({ symbol, label: data.label, data, result, best, score: scoreResult(result, cfg.capital) }); state.candles = prevCandles; state.best = prevBest; addFeedback(`${data.label} 完成：胜率 ${pct(result.winRate)}，交易 ${result.trades.length} 笔。`); }
+      catch (error) { addFeedback(`${instruments[symbol].name} 跳过：${error.message || error}`); }
+    }
+    const ranked = results.filter((x) => x.result.trades.length >= 5).sort((a, b) => b.score - a.score);
+    if (!ranked.length) throw new Error("本轮扫描没有找到交易次数足够的品种。");
+    const top = ranked[0]; els.symbolInput.value = top.symbol; state.candles = top.data.candles; state.best = top.best; localStorage.setItem("paperTrader.best", JSON.stringify(state.best)); saveTrades(top.result.trades); addFeedback(`扫描完成：当前推荐 ${top.label}，胜率 ${pct(top.result.winRate)}，净利 ${money.format(top.result.netProfit)}。`, true); render(top.result);
+  } catch (error) { showError(error); addFeedback(`扫描失败：${error.message || error}`, true); }
+  finally { setBusy(false); }
+}
+
 function saveTrades(trades) { state.trades = trades; localStorage.setItem("paperTrader.trades", JSON.stringify(trades)); }
 function showError(error) { els.signalCard.className = "signal-card neutral"; els.signalAction.textContent = "操作失败"; els.signalReason.textContent = error.message || String(error); }
 
-els.csvInput.addEventListener("change", async (event) => { try { const file = event.target.files[0]; if (!file) return; state.candles = parseCsv(await file.text()); render(); } catch (e) { showError(e); } });
-els.fetchButton.addEventListener("click", async () => { try { await loadSelectedHistory(); } catch (e) { showError(e); } });
-els.sampleButton.addEventListener("click", () => { state.candles = makeSampleCandles(); render(); });
-els.runButton.addEventListener("click", () => { try { if (!state.candles.length) state.candles = makeSampleCandles(); const result = runSimulation(state.candles, settings()); saveTrades(result.trades); render(result); } catch (e) { showError(e); } });
-els.optimizeButton.addEventListener("click", () => { try { if (!state.candles.length) state.candles = makeSampleCandles(); const best = optimize(); const result = runSimulation(state.candles, settings()); saveTrades(result.trades); els.signalAction.textContent = "自主学习完成"; els.signalReason.textContent = `测试段净利润 ${money.format(best.testResult.netProfit)}，交易 ${best.testResult.trades.length} 笔。`; render(result); } catch (e) { showError(e); } });
-els.scanButton.addEventListener("click", async () => { try { await scanMarkets(); } catch (e) { showError(e); } });
-els.resetButton.addEventListener("click", () => { localStorage.removeItem("paperTrader.trades"); localStorage.removeItem("paperTrader.best"); state.trades = []; state.best = null; render(); });
-els.exportButton.addEventListener("click", () => { const header = "side,entryTime,exitTime,entry,exit,quantity,pnl,rValue,reason\n"; const body = state.trades.map((t) => [t.side, t.entryTime, t.exitTime, t.entry, t.exit, t.quantity, t.pnl.toFixed(2), t.rValue.toFixed(3), t.reason].join(",")).join("\n"); const blob = new Blob([header + body], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "paper-trades.csv"; a.click(); URL.revokeObjectURL(url); });
+els.csvInput.addEventListener("change", async (event) => { try { const file = event.target.files[0]; if (!file) return; state.candles = parseCsv(await file.text()); addFeedback(`CSV已导入，共 ${state.candles.length} 根K线。`, true); render(); } catch (e) { showError(e); } });
+els.fetchButton.addEventListener("click", loadSelectedHistory);
+els.sampleButton.addEventListener("click", () => { state.candles = makeSampleCandles(); addFeedback("样本行情已加载。", true); render(); });
+els.runButton.addEventListener("click", () => { try { if (!state.candles.length) state.candles = makeSampleCandles(); const result = runSimulation(state.candles, settings()); saveTrades(result.trades); addFeedback(`模拟完成：交易 ${result.trades.length} 笔，胜率 ${pct(result.winRate)}，净利 ${money.format(result.netProfit)}。`, true); render(result); } catch (e) { showError(e); } });
+els.optimizeButton.addEventListener("click", () => { try { if (!state.candles.length) state.candles = makeSampleCandles(); const best = optimize(); const result = runSimulation(state.candles, settings()); saveTrades(result.trades); addFeedback(`自主学习完成：测试段净利润 ${money.format(best.testResult.netProfit)}，交易 ${best.testResult.trades.length} 笔。`, true); render(result); } catch (e) { showError(e); addFeedback(`自主学习失败：${e.message || e}`, true); } });
+els.scanButton.addEventListener("click", scanMarkets);
+els.randomLearnButton.addEventListener("click", randomLearnAllMarkets);
+els.resetButton.addEventListener("click", () => { localStorage.removeItem("paperTrader.trades"); localStorage.removeItem("paperTrader.best"); state.trades = []; state.best = null; addFeedback("模拟交易记录已重置，排行榜未清空。", true); render(); });
+els.clearBoardButton.addEventListener("click", () => { localStorage.removeItem("paperTrader.learning"); state.learning = []; addFeedback("胜率排行榜已清空。", true); renderLeaderboard(); });
+els.exportButton.addEventListener("click", () => { const header = "side,entryTime,exitTime,entry,exit,quantity,pnl,rValue,reason\n"; const body = state.trades.map((t) => [t.side, t.entryTime, t.exitTime, t.entry, t.exit, t.quantity, t.pnl.toFixed(2), t.rValue.toFixed(3), t.reason].join(",")).join("\n"); const blob = new Blob([header + body], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "paper-trades.csv"; a.click(); URL.revokeObjectURL(url); addFeedback("交易日志CSV已导出。", true); });
 window.addEventListener("beforeinstallprompt", (event) => { event.preventDefault(); state.deferredPrompt = event; els.installButton.hidden = false; });
 els.installButton.addEventListener("click", async () => { if (!state.deferredPrompt) return; state.deferredPrompt.prompt(); await state.deferredPrompt.userChoice; state.deferredPrompt = null; els.installButton.hidden = true; });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("service-worker.js").catch(() => {});
 render();
+renderLeaderboard();
