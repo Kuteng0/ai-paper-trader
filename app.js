@@ -618,6 +618,7 @@ function updateModelFromCandidates(candidates) {
     profitFactor: item.result?.profitFactor,
     maxDrawdown: item.result?.maxDrawdown,
     expectancy: item.result?.trades?.length ? item.result.trades.reduce((sum, trade) => sum + trade.rValue, 0) / item.result.trades.length : 0,
+    liveEligible: item.liveEligible !== false && item.grade !== "观察",
     updatedAt: new Date().toISOString()
   }))];
   const map = new Map();
@@ -629,7 +630,7 @@ function updateModelFromCandidates(candidates) {
   }
   const population = [...map.values()].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 30);
   model.population = population;
-  model.champion = population[0] || model.champion;
+  model.champion = population.find((item) => item.liveEligible !== false && item.grade !== "观察") || model.champion;
   model.generation = (model.generation || 0) + 1;
   model.updatedAt = new Date().toISOString();
   model.notes = "Champion evolves from population, walk-forward validation, regime filter, and live-reference tracking.";
@@ -662,6 +663,24 @@ function randomTrainingPlan() {
     range: ranges[randomInt(0, ranges.length - 1)],
     runId: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
   };
+}
+
+function btcTrainingPlan() {
+  const intervals = ["5m", "15m", "30m", "1h"];
+  const ranges = ["1mo", "60d", "6mo"];
+  return {
+    interval: intervals[randomInt(0, intervals.length - 1)],
+    range: ranges[randomInt(0, ranges.length - 1)],
+    runId: `btc-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+  };
+}
+
+function isObservationCandidate(result, score) {
+  return result.trades.length >= MIN_LEARNING_TRADES
+    && Number.isFinite(score)
+    && result.winRate >= 0.44
+    && result.profitFactor >= 0.9
+    && result.maxDrawdown <= 0.16;
 }
 
 function randomTrainingWindow(candles) {
@@ -809,12 +828,12 @@ async function randomLearnAllMarkets() {
 
 async function randomLearnBtcOnly() {
   const original = SYMBOLS.slice();
-  const plan = randomTrainingPlan();
+  const plan = btcTrainingPlan();
   const interval = plan.interval;
   const cfg = settings();
   const allResults = [];
   setBusy(true);
-  addFeedback(`BTCUSD单独训练：周期 ${plan.interval}，范围 ${plan.range}，随机窗口 + 80组随机策略。`, true);
+  addFeedback(`BTCUSD单独训练：真实历史行情，周期 ${plan.interval}，范围 ${plan.range}，随机窗口 + 160组随机/变异策略。`, true);
   try {
     currentModel();
     for (const symbol of ["BTCUSD"]) {
@@ -827,13 +846,14 @@ async function randomLearnBtcOnly() {
         defaultStrategy,
         ...modelSeedStrategies(symbol, interval),
         ...seededStrategies(symbol, interval),
-        ...Array.from({ length: 80 }, randomStrategy)
+        ...Array.from({ length: 160 }, randomStrategy)
       ];
       const unique = new Map(strategies.map((strategy) => [`${strategy.fast}-${strategy.slow}-${strategy.rsiFloor}-${strategy.rsiCeil}-${strategy.stopAtr}-${strategy.takeProfitR}`, strategy]));
+      let bestObservation = null;
       for (const strategy of unique.values()) {
         const evaluation = evaluateStrategy(trainCandles, cfg, strategy);
         const result = evaluation.result;
-        if (result.trades.length < MIN_LEARNING_TRADES || evaluation.grade === "C") continue;
+        if (result.trades.length < MIN_LEARNING_TRADES) continue;
         const record = makeRecord(symbol, interval, result, strategy, "BTC单独训练");
         record.score = evaluation.score + 25;
         record.grade = evaluation.grade;
@@ -841,17 +861,29 @@ async function randomLearnBtcOnly() {
         record.range = plan.range;
         record.windowKey = sampled.windowKey;
         record.runId = plan.runId;
+        if (evaluation.grade === "C") {
+          if (isObservationCandidate(result, record.score)) {
+            record.grade = "观察";
+            record.source = "BTC观察候选";
+            const observed = { symbol, data: { ...data, candles: trainCandles }, result, strategy, record, score: record.score, grade: record.grade, regime, liveEligible: false };
+            if (!bestObservation || observed.score > bestObservation.score) bestObservation = observed;
+          }
+          continue;
+        }
         saveLearningRecord(record);
-        const scored = { symbol, data: { ...data, candles: trainCandles }, result, strategy, record, score: record.score, grade: evaluation.grade, regime };
+        const scored = { symbol, data: { ...data, candles: trainCandles }, result, strategy, record, score: record.score, grade: evaluation.grade, regime, liveEligible: true };
         allResults.push(scored);
         if (!bestForSymbol || scored.score > bestForSymbol.score) bestForSymbol = scored;
       }
       if (bestForSymbol) addFeedback(`BTCUSD训练完成：窗口 ${sampled.windowKey}，等级 ${bestForSymbol.grade}，正确率 ${pct(bestForSymbol.result.winRate)}。`, true);
-      else addFeedback("BTCUSD本轮随机窗口没有产生可替换模型的策略。", true);
+      else if (bestObservation) {
+        allResults.push(bestObservation);
+        addFeedback(`BTCUSD本轮未达到实盘参考标准，已保存观察候选继续进化：正确率 ${pct(bestObservation.result.winRate)}，盈亏比 ${Number(bestObservation.result.profitFactor || 0).toFixed(2)}。`, true);
+      } else addFeedback("BTCUSD本轮随机窗口没有产生可替换模型的策略。", true);
     }
-    if (!allResults.length) throw new Error("BTCUSD本轮没有策略通过稳健过滤。");
+    if (!allResults.length) throw new Error("BTCUSD本轮没有足够交易次数的历史模拟候选。已换用真实历史行情随机训练，请再运行几次抽取不同窗口。");
     const model = updateModelFromCandidates(allResults);
-    const champion = model.population.find((item) => item.symbol === "BTCUSD") || allResults.sort((a, b) => b.score - a.score)[0].record;
+    const champion = model.population.find((item) => item.symbol === "BTCUSD" && item.liveEligible !== false && item.grade !== "观察") || model.population.find((item) => item.symbol === "BTCUSD") || allResults.sort((a, b) => b.score - a.score)[0].record;
     const best = allResults.sort((a, b) => b.score - a.score)[0];
     state.candles = best.data.candles;
     state.best = { strategy: best.strategy, trainResult: best.result, testResult: best.result, score: best.score, grade: best.grade, regime: best.regime };
@@ -859,7 +891,7 @@ async function randomLearnBtcOnly() {
     saveTrades(best.result.trades);
     els.symbolInput.value = "BTCUSD";
     render(best.result);
-    addFeedback(`BTCUSD单独训练完成：当前BTC候选 ${champion.label || champion.symbol}，等级 ${champion.grade || best.grade}。`, true);
+    addFeedback(`BTCUSD单独训练完成：当前BTC候选 ${champion.label || champion.symbol}，等级 ${champion.grade || best.grade}。观察候选只用于继续训练，不用于实盘LINE参考。`, true);
   } catch (error) {
     showError(error);
     addFeedback(`BTCUSD单独训练失败：${error.message || error}`, true);

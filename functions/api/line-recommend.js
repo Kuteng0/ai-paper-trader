@@ -29,7 +29,8 @@ export async function onRequestPost({ request, env }) {
     .slice(0, 10);
 
   const modelChampionRaw = activeState.model?.champion?.strategy ? normalizeChampion(activeState.model.champion) : null;
-  const modelChampion = forceSymbol && modelChampionRaw?.symbol !== forceSymbol ? null : modelChampionRaw;
+  const eligibleModelChampion = modelChampionRaw && modelChampionRaw.liveEligible !== false && modelChampionRaw.grade !== "观察" ? modelChampionRaw : null;
+  const modelChampion = forceSymbol && eligibleModelChampion?.symbol !== forceSymbol ? null : eligibleModelChampion;
   if (!top10.length && !modelChampion) return json({ error: "AI模型还没有可用冠军策略。请先运行训练模式。" }, 400);
 
   const best = modelChampion && (!top10[0] || (modelChampion.score || 0) >= (top10[0].score || 0)) ? modelChampion : top10[0];
@@ -85,7 +86,8 @@ function normalizeChampion(champion) {
     trades: Number(champion.trades || 0),
     netProfit: Number(champion.netProfit || 0),
     maxDrawdown: Number(champion.maxDrawdown || 0),
-    profitFactor: Number(champion.profitFactor || 0)
+    profitFactor: Number(champion.profitFactor || 0),
+    liveEligible: champion.liveEligible !== false
   };
 }
 
