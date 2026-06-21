@@ -775,6 +775,67 @@ async function randomLearnAllMarkets() {
   }
 }
 
+async function randomLearnBtcOnly() {
+  const original = SYMBOLS.slice();
+  const plan = randomTrainingPlan();
+  const interval = plan.interval;
+  const cfg = settings();
+  const allResults = [];
+  setBusy(true);
+  addFeedback(`BTCUSD单独训练：周期 ${plan.interval}，范围 ${plan.range}，随机窗口 + 80组随机策略。`, true);
+  try {
+    currentModel();
+    for (const symbol of ["BTCUSD"]) {
+      const data = await fetchHistory(symbol, interval, plan.range);
+      const sampled = randomTrainingWindow(data.candles);
+      const trainCandles = sampled.candles;
+      const regime = marketRegime(trainCandles);
+      let bestForSymbol = null;
+      const strategies = [
+        defaultStrategy,
+        ...modelSeedStrategies(symbol, interval),
+        ...seededStrategies(symbol, interval),
+        ...Array.from({ length: 80 }, randomStrategy)
+      ];
+      const unique = new Map(strategies.map((strategy) => [`${strategy.fast}-${strategy.slow}-${strategy.rsiFloor}-${strategy.rsiCeil}-${strategy.stopAtr}-${strategy.takeProfitR}`, strategy]));
+      for (const strategy of unique.values()) {
+        const evaluation = evaluateStrategy(trainCandles, cfg, strategy);
+        const result = evaluation.result;
+        if (result.trades.length < MIN_LEARNING_TRADES || evaluation.grade === "C") continue;
+        const record = makeRecord(symbol, interval, result, strategy, "BTC单独训练");
+        record.score = evaluation.score + 25;
+        record.grade = evaluation.grade;
+        record.regime = regime;
+        record.range = plan.range;
+        record.windowKey = sampled.windowKey;
+        record.runId = plan.runId;
+        saveLearningRecord(record);
+        const scored = { symbol, data: { ...data, candles: trainCandles }, result, strategy, record, score: record.score, grade: evaluation.grade, regime };
+        allResults.push(scored);
+        if (!bestForSymbol || scored.score > bestForSymbol.score) bestForSymbol = scored;
+      }
+      if (bestForSymbol) addFeedback(`BTCUSD训练完成：窗口 ${sampled.windowKey}，等级 ${bestForSymbol.grade}，正确率 ${pct(bestForSymbol.result.winRate)}。`, true);
+      else addFeedback("BTCUSD本轮随机窗口没有产生可替换模型的策略。", true);
+    }
+    if (!allResults.length) throw new Error("BTCUSD本轮没有策略通过稳健过滤。");
+    const model = updateModelFromCandidates(allResults);
+    const champion = model.population.find((item) => item.symbol === "BTCUSD") || allResults.sort((a, b) => b.score - a.score)[0].record;
+    const best = allResults.sort((a, b) => b.score - a.score)[0];
+    state.candles = best.data.candles;
+    state.best = { strategy: best.strategy, trainResult: best.result, testResult: best.result, score: best.score, grade: best.grade, regime: best.regime };
+    localStorage.setItem("paperTrader.best", JSON.stringify(state.best));
+    saveTrades(best.result.trades);
+    els.symbolInput.value = "BTCUSD";
+    render(best.result);
+    addFeedback(`BTCUSD单独训练完成：当前BTC候选 ${champion.label || champion.symbol}，等级 ${champion.grade || best.grade}。`, true);
+  } catch (error) {
+    showError(error);
+    addFeedback(`BTCUSD单独训练失败：${error.message || error}`, true);
+  } finally {
+    setBusy(false);
+  }
+}
+
 function saveTrades(trades) { state.trades = trades; localStorage.setItem("paperTrader.trades", JSON.stringify(trades)); }
 function showError(error) { els.signalCard.className = "signal-card neutral"; els.signalAction.textContent = "操作失败"; els.signalReason.textContent = error.message || String(error); }
 
@@ -785,6 +846,7 @@ els.runButton.addEventListener("click", () => { try { if (!state.candles.length)
 els.optimizeButton.addEventListener("click", randomLearnAllMarkets);
 els.scanButton.addEventListener("click", scanMarkets);
 els.randomLearnButton.addEventListener("click", randomLearnAllMarkets);
+document.getElementById("btcTrainingButton")?.addEventListener("click", randomLearnBtcOnly);
 els.resetButton.addEventListener("click", () => { localStorage.removeItem("paperTrader.trades"); localStorage.removeItem("paperTrader.best"); state.trades = []; state.best = null; addFeedback("模拟交易记录已重置，排行榜未清空。", true); render(); });
 els.clearBoardButton.addEventListener("click", () => { localStorage.removeItem("paperTrader.learning"); state.learning = []; addFeedback("胜率排行榜已清空。", true); renderLeaderboard(); });
 els.exportButton.addEventListener("click", () => { const header = "side,entryTime,exitTime,entry,exit,quantity,pnl,rValue,reason\n"; const body = state.trades.map((t) => [t.side, t.entryTime, t.exitTime, t.entry, t.exit, t.quantity, t.pnl.toFixed(2), t.rValue.toFixed(3), t.reason].join(",")).join("\n"); const blob = new Blob([header + body], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "paper-trades.csv"; a.click(); URL.revokeObjectURL(url); addFeedback("交易日志CSV已导出。", true); });

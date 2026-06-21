@@ -20,14 +20,16 @@ export async function onRequestPost({ request, env }) {
   const cloudState = normalizeCloudState(await env.LEARNING_KV.get(KEY, "json"));
   const requestState = normalizeCloudState(body);
   const activeState = requestState.records.length || requestState.model ? requestState : cloudState;
-  const records = activeState.records;
+  const forceSymbol = body.forceSymbol ? String(body.forceSymbol) : "";
+  const records = forceSymbol ? activeState.records.filter((r) => r?.symbol === forceSymbol) : activeState.records;
   const top10 = records
     .filter((r) => r && r.trades >= MIN_TRADES && Number.isFinite(r.winRate) && r.strategy && r.grade !== "C")
     .map((r) => ({ ...r, score: Number.isFinite(r.score) ? r.score : scoreRecord(r), grade: r.grade || gradeRecord(r) }))
     .sort((a, b) => (b.score - a.score) || (b.winRate - a.winRate) || (b.profitFactor - a.profitFactor) || (b.trades - a.trades))
     .slice(0, 10);
 
-  const modelChampion = activeState.model?.champion?.strategy ? normalizeChampion(activeState.model.champion) : null;
+  const modelChampionRaw = activeState.model?.champion?.strategy ? normalizeChampion(activeState.model.champion) : null;
+  const modelChampion = forceSymbol && modelChampionRaw?.symbol !== forceSymbol ? null : modelChampionRaw;
   if (!top10.length && !modelChampion) return json({ error: "AI模型还没有可用冠军策略。请先运行训练模式。" }, 400);
 
   const best = modelChampion && (!top10[0] || (modelChampion.score || 0) >= (top10[0].score || 0)) ? modelChampion : top10[0];
