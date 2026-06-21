@@ -559,6 +559,7 @@ function saveLearningRecord(record) {
     .sort((a, b) => ((b.score || 0) - (a.score || 0)) || String(b.time || "").localeCompare(String(a.time || "")))
     .slice(0, 300);
   localStorage.setItem("paperTrader.learning", JSON.stringify(state.learning));
+  window.markUnsynced?.("learning");
 }
 
 function currentModel() {
@@ -577,6 +578,7 @@ function currentModel() {
 function saveModel(model = state.model) {
   state.model = model;
   localStorage.setItem("paperTrader.model", JSON.stringify(model));
+  window.markUnsynced?.("model");
   renderModelPanel();
 }
 
@@ -742,7 +744,7 @@ els.csvInput.addEventListener("change", async (event) => { try { const file = ev
 els.fetchButton.addEventListener("click", loadSelectedHistory);
 els.sampleButton.addEventListener("click", () => { state.candles = makeSampleCandles(); addFeedback("样本行情已加载。", true); render(); });
 els.runButton.addEventListener("click", () => { try { if (!state.candles.length) state.candles = makeSampleCandles(); const result = runSimulation(state.candles, settings()); saveTrades(result.trades); addFeedback(`模拟完成：交易 ${result.trades.length} 笔，胜率 ${pct(result.winRate)}，净利 ${money.format(result.netProfit)}。`, true); render(result); } catch (e) { showError(e); } });
-els.optimizeButton.addEventListener("click", () => { try { if (!state.candles.length) state.candles = makeSampleCandles(); const best = optimize(); const result = runSimulation(state.candles, settings()); saveTrades(result.trades); addFeedback(`自主学习完成：测试段净利润 ${money.format(best.testResult.netProfit)}，交易 ${best.testResult.trades.length} 笔。`, true); render(result); } catch (e) { showError(e); addFeedback(`自主学习失败：${e.message || e}`, true); } });
+els.optimizeButton.addEventListener("click", randomLearnAllMarkets);
 els.scanButton.addEventListener("click", scanMarkets);
 els.randomLearnButton.addEventListener("click", randomLearnAllMarkets);
 els.resetButton.addEventListener("click", () => { localStorage.removeItem("paperTrader.trades"); localStorage.removeItem("paperTrader.best"); state.trades = []; state.best = null; addFeedback("模拟交易记录已重置，排行榜未清空。", true); render(); });

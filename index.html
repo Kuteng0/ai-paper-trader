@@ -36,7 +36,7 @@
         </div>
         <div class="primary-actions">
           <button id="followModeButton" class="primary-button" type="button">实盘参考LINE</button>
-          <button id="trainingModeButton" class="accent-button" type="button">训练模式</button>
+          <button id="trainingModeButton" class="accent-button" type="button">AI训练升级</button>
         </div>
         <p class="risk-note">这里不会自动下真实订单。下单前必须核对外貨EX CFD 实际报价、点差、滑点，并先设置止损/OCO。</p>
       </section>
@@ -68,12 +68,12 @@
           </div>
           <span id="learnCount">0 条记录</span>
         </div>
-        <button id="randomLearnButton" class="wide-button" type="button">随机模拟并升级AI</button>
+        <button id="randomLearnButton" class="wide-button" type="button">AI训练升级</button>
         <div class="cloud-actions">
           <button id="syncCloudButton" type="button">同步云端</button>
           <button id="restoreCloudButton" type="button">恢复云端</button>
         </div>
-        <p class="hint">训练结果先写入本机；点击“同步云端”后保存到 Cloudflare KV，换手机或缓存丢失时可用“恢复云端”。</p>
+        <p class="hint">训练结果和AI模型先写入本机，不会训练一次就上传。你可以手动同步云端；如果App在0:00打开且发现未同步内容，会自动同步一次。</p>
         <div id="feedbackLog" class="feedback-log" aria-label="操作反馈">
           <p class="empty">操作反馈会显示在这里。</p>
         </div>
@@ -117,7 +117,7 @@
         </div>
         <div class="button-row secondary-row">
           <button id="runButton" type="button">运行模拟</button>
-          <button id="optimizeButton" type="button">自主学习</button>
+          <button id="optimizeButton" type="button">AI训练升级</button>
         </div>
         <details class="advanced-box">
           <summary>更多设置</summary>

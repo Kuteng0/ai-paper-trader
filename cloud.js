@@ -2,6 +2,8 @@
 
 const FREE_LIMITS = { cloudWritesPerDay: 50, cloudReadsPerDay: 200, linePushesPerDay: 10, trainingRunsPerDay: 20 };
 const LIVE_REFS_KEY = "paperTrader.liveRefs";
+const UNSYNCED_KEY = "paperTrader.unsynced";
+const LAST_AUTO_SYNC_KEY = "paperTrader.lastAutoSyncDate";
 
 function todayKey() { return new Date().toISOString().slice(0, 10); }
 function usageKey(name) { return `paperTrader.usage.${todayKey()}.${name}`; }
@@ -33,6 +35,7 @@ async function syncCloudLearning() {
     renderLeaderboard();
   }
   if (data.model) saveModel(data.model);
+  markSynced();
 }
 
 async function restoreCloudLearning() {
@@ -42,6 +45,7 @@ async function restoreCloudLearning() {
   localStorage.setItem("paperTrader.learning", JSON.stringify(state.learning));
   if (data.model) saveModel(data.model);
   renderLeaderboard();
+  markSynced();
   addFeedback(`云端恢复完成：已恢复 ${state.learning.length} 条学习记录，AI模型第${state.model?.generation || 0}代。今日云端读取 ${getUsage("cloudReads")}/${FREE_LIMITS.cloudReadsPerDay}。`, true);
 }
 
@@ -55,10 +59,9 @@ function confirmCloudAction(kind) {
 
 async function lineFollowRecommendation() {
   assertFreeLimit("linePushes", FREE_LIMITS.linePushesPerDay, "LINE推送");
-  addFeedback("正在生成实盘参考：同步策略库、读取排行榜、获取最新行情、计算止损/止盈/OCO...");
+  addFeedback("正在生成实盘参考：使用本机当前AI模型、读取行情、计算止损/止盈/OCO；不会自动同步云端。");
   await checkLiveReferenceOutcomes().catch(() => {});
-  await syncCloudLearning();
-  const data = await cloudJson("/api/line-recommend", { method: "POST" }, "linePushes");
+  const data = await cloudJson("/api/line-recommend", { method: "POST", body: JSON.stringify({ records: state.learning || [], model: state.model || null }) }, "linePushes");
   saveLiveReference(data);
   addFeedback(`${data.message || "实盘参考LINE已发送。"} 今日LINE推送 ${getUsage("linePushes")}/${FREE_LIMITS.linePushesPerDay}。`, true);
 }
@@ -66,10 +69,60 @@ async function lineFollowRecommendation() {
 async function trainingMode() {
   assertFreeLimit("trainingRuns", FREE_LIMITS.trainingRunsPerDay, "训练模式");
   addUsage("trainingRuns");
-  addFeedback(`训练模式启动：先进行全品种稳健训练，完成后云端备份。今日训练 ${getUsage("trainingRuns")}/${FREE_LIMITS.trainingRunsPerDay}。`, true);
+  addFeedback(`训练模式启动：进行AI模型训练并保存在本机。今日训练 ${getUsage("trainingRuns")}/${FREE_LIMITS.trainingRunsPerDay}。训练完成后不会自动同步云端。`, true);
   await randomLearnAllMarkets();
+}
+
+function unsyncedState() {
+  return JSON.parse(localStorage.getItem(UNSYNCED_KEY) || "{\"dirty\":false,\"reason\":\"\",\"updatedAt\":null}");
+}
+
+function markUnsynced(reason = "model") {
+  localStorage.setItem(UNSYNCED_KEY, JSON.stringify({ dirty: true, reason, updatedAt: new Date().toISOString() }));
+  updateUnsyncedStatus();
+}
+
+function markSynced() {
+  localStorage.setItem(UNSYNCED_KEY, JSON.stringify({ dirty: false, reason: "", updatedAt: new Date().toISOString() }));
+  updateUnsyncedStatus();
+}
+
+function updateUnsyncedStatus() {
+  const status = document.getElementById("cloudStatus");
+  if (!status) return;
+  status.textContent = unsyncedState().dirty ? "本机有未同步AI模型" : "云端已同步";
+}
+
+async function autoSyncIfNeeded(source = "timer") {
+  const stateInfo = unsyncedState();
+  if (!stateInfo.dirty) return;
+  if (getUsage("cloudWrites") >= FREE_LIMITS.cloudWritesPerDay) return;
+  addFeedback(`${source === "midnight" ? "0:00" : "启动检查"}：发现本机AI模型未同步，开始自动同步云端。`, true);
   await syncCloudLearning();
 }
+
+function scheduleMidnightAutoSync() {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(24, 0, 0, 0);
+  const delay = Math.max(1000, next.getTime() - now.getTime());
+  window.setTimeout(async () => {
+    localStorage.setItem(LAST_AUTO_SYNC_KEY, todayKey());
+    await autoSyncIfNeeded("midnight").catch((error) => addFeedback(`0:00自动同步失败：${error.message || error}`, true));
+    scheduleMidnightAutoSync();
+  }, delay);
+}
+
+function checkMissedAutoSync() {
+  const today = todayKey();
+  const last = localStorage.getItem(LAST_AUTO_SYNC_KEY);
+  if (last !== today && unsyncedState().dirty) {
+    localStorage.setItem(LAST_AUTO_SYNC_KEY, today);
+    autoSyncIfNeeded("startup").catch((error) => addFeedback(`启动自动同步失败：${error.message || error}`, true));
+  }
+}
+
+window.markUnsynced = markUnsynced;
 
 function liveRefs() {
   return JSON.parse(localStorage.getItem(LIVE_REFS_KEY) || "[]");
@@ -186,4 +239,7 @@ function bindCloudButtons() {
 bindCloudButtons();
 checkLiveReferenceOutcomes().catch(() => {});
 renderLiveReferenceLog();
+updateUnsyncedStatus();
+checkMissedAutoSync();
+scheduleMidnightAutoSync();
 addFeedback("免费保护模式已启用：打开App不自动读取云端；只有点击按钮才会消耗Cloudflare/LINE额度。", true);
