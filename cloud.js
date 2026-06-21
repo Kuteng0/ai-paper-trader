@@ -25,13 +25,14 @@ async function cloudJson(path, options = {}, usageName = "cloudReads") {
 async function syncCloudLearning() {
   const records = state.learning || [];
   addFeedback(`正在同步云端：准备上传 ${records.length} 条学习记录...`);
-  const data = await cloudJson("/api/learning", { method: "POST", body: JSON.stringify({ records }) }, "cloudWrites");
-  addFeedback(`云端同步完成：云端现有 ${data.count} 条学习记录。今日云端写入 ${getUsage("cloudWrites")}/${FREE_LIMITS.cloudWritesPerDay}。`, true);
+  const data = await cloudJson("/api/learning", { method: "POST", body: JSON.stringify({ records, model: state.model || null }) }, "cloudWrites");
+  addFeedback(`云端同步完成：云端现有 ${data.count} 条学习记录，AI模型第${data.model?.generation || 0}代。今日云端写入 ${getUsage("cloudWrites")}/${FREE_LIMITS.cloudWritesPerDay}。`, true);
   if (data.records?.length) {
     state.learning = data.records;
     localStorage.setItem("paperTrader.learning", JSON.stringify(state.learning));
     renderLeaderboard();
   }
+  if (data.model) saveModel(data.model);
 }
 
 async function restoreCloudLearning() {
@@ -39,8 +40,9 @@ async function restoreCloudLearning() {
   const data = await cloudJson("/api/learning", {}, "cloudReads");
   state.learning = data.records || [];
   localStorage.setItem("paperTrader.learning", JSON.stringify(state.learning));
+  if (data.model) saveModel(data.model);
   renderLeaderboard();
-  addFeedback(`云端恢复完成：已恢复 ${state.learning.length} 条学习记录。今日云端读取 ${getUsage("cloudReads")}/${FREE_LIMITS.cloudReadsPerDay}。`, true);
+  addFeedback(`云端恢复完成：已恢复 ${state.learning.length} 条学习记录，AI模型第${state.model?.generation || 0}代。今日云端读取 ${getUsage("cloudReads")}/${FREE_LIMITS.cloudReadsPerDay}。`, true);
 }
 
 function confirmCloudAction(kind) {

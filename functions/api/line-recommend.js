@@ -7,18 +7,20 @@ export async function onRequestPost({ env }) {
     return json({ error: "LINE 尚未配置。请设置 LINE_CHANNEL_ACCESS_TOKEN 和 LINE_TO。" }, 500);
   }
 
-  const records = await env.LEARNING_KV.get(KEY, "json") || [];
+  const cloudState = normalizeCloudState(await env.LEARNING_KV.get(KEY, "json"));
+  const records = cloudState.records;
   const top10 = records
     .filter((r) => r && r.trades >= MIN_TRADES && Number.isFinite(r.winRate) && r.strategy && r.grade !== "C")
     .map((r) => ({ ...r, score: Number.isFinite(r.score) ? r.score : scoreRecord(r), grade: r.grade || gradeRecord(r) }))
     .sort((a, b) => (b.score - a.score) || (b.winRate - a.winRate) || (b.profitFactor - a.profitFactor) || (b.trades - a.trades))
     .slice(0, 10);
 
-  if (!top10.length) return json({ error: "排行榜还没有通过稳健过滤的可用策略。请先运行训练模式。" }, 400);
+  const modelChampion = cloudState.model?.champion?.strategy ? normalizeChampion(cloudState.model.champion) : null;
+  if (!top10.length && !modelChampion) return json({ error: "AI模型还没有可用冠军策略。请先运行训练模式。" }, 400);
 
-  const best = top10[0];
+  const best = modelChampion && (!top10[0] || (modelChampion.score || 0) >= (top10[0].score || 0)) ? modelChampion : top10[0];
   const live = await buildLivePlan(best);
-  const text = buildMessage(best, top10.length, live);
+  const text = buildMessage(best, Math.max(1, top10.length), live);
   const response = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
@@ -37,6 +39,29 @@ export async function onRequestPost({ env }) {
   }
 
   return json({ message: `LINE已发送：${best.label}，等级${best.grade}，${live.actionText}。`, selected: best, live });
+}
+
+function normalizeCloudState(value) {
+  if (Array.isArray(value)) return { records: value, model: null };
+  if (value && typeof value === "object") return { records: Array.isArray(value.records) ? value.records : [], model: value.model || null };
+  return { records: [], model: null };
+}
+
+function normalizeChampion(champion) {
+  return {
+    symbol: champion.symbol,
+    label: champion.label || champion.symbol,
+    interval: champion.interval || "15m",
+    regime: champion.regime || "unknown",
+    strategy: champion.strategy,
+    score: Number(champion.score || 0),
+    grade: champion.grade || "B",
+    winRate: Number(champion.winRate || 0),
+    trades: Number(champion.trades || 0),
+    netProfit: Number(champion.netProfit || 0),
+    maxDrawdown: Number(champion.maxDrawdown || 0),
+    profitFactor: Number(champion.profitFactor || 0)
+  };
 }
 
 async function buildLivePlan(best) {

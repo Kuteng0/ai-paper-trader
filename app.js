@@ -7,6 +7,7 @@ const state = {
   trades: JSON.parse(localStorage.getItem("paperTrader.trades") || "[]"),
   best: JSON.parse(localStorage.getItem("paperTrader.best") || "null"),
   learning: JSON.parse(localStorage.getItem("paperTrader.learning") || "[]"),
+  model: JSON.parse(localStorage.getItem("paperTrader.model") || "null"),
   feedback: [],
   deferredPrompt: null
 };
@@ -560,6 +561,180 @@ function saveLearningRecord(record) {
   localStorage.setItem("paperTrader.learning", JSON.stringify(state.learning));
 }
 
+function currentModel() {
+  if (state.model && typeof state.model === "object") return state.model;
+  state.model = {
+    version: 1,
+    generation: 0,
+    champion: null,
+    population: [],
+    updatedAt: null,
+    notes: "AI model initializes from robust strategy search."
+  };
+  return state.model;
+}
+
+function saveModel(model = state.model) {
+  state.model = model;
+  localStorage.setItem("paperTrader.model", JSON.stringify(model));
+  renderModelPanel();
+}
+
+function strategyKey(strategy) {
+  return [strategy.fast, strategy.slow, strategy.rsiFloor, strategy.rsiCeil, strategy.stopAtr, strategy.takeProfitR].join("-");
+}
+
+function updateModelFromCandidates(candidates) {
+  if (!candidates.length) return currentModel();
+  const model = currentModel();
+  const previous = Array.isArray(model.population) ? model.population : [];
+  const combined = [...previous, ...candidates.map((item) => ({
+    symbol: item.symbol,
+    label: item.data?.label || item.label,
+    interval: item.record?.interval || els.intervalInput.value,
+    regime: item.regime || item.record?.regime || "unknown",
+    strategy: item.strategy,
+    score: item.score,
+    grade: item.grade,
+    winRate: item.result?.winRate,
+    trades: item.result?.trades?.length || item.record?.trades || 0,
+    netProfit: item.result?.netProfit,
+    profitFactor: item.result?.profitFactor,
+    maxDrawdown: item.result?.maxDrawdown,
+    updatedAt: new Date().toISOString()
+  }))];
+  const map = new Map();
+  for (const item of combined) {
+    if (!item.strategy || item.grade === "C") continue;
+    const key = `${item.symbol}|${item.interval}|${item.regime}|${strategyKey(item.strategy)}`;
+    const previousItem = map.get(key);
+    if (!previousItem || (item.score || 0) > (previousItem.score || 0)) map.set(key, item);
+  }
+  const population = [...map.values()].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 30);
+  model.population = population;
+  model.champion = population[0] || model.champion;
+  model.generation = (model.generation || 0) + 1;
+  model.updatedAt = new Date().toISOString();
+  model.notes = "Champion evolves from population, walk-forward validation, regime filter, and live-reference tracking.";
+  saveModel(model);
+  return model;
+}
+
+function modelSeedStrategies(symbol, interval) {
+  const model = currentModel();
+  const seeds = (model.population || [])
+    .filter((item) => item.symbol === symbol && item.interval === interval && item.strategy)
+    .slice(0, 8);
+  const strategies = [];
+  for (const item of seeds) {
+    strategies.push(item.strategy);
+    for (let i = 0; i < 5; i++) strategies.push(mutateStrategy(item.strategy));
+  }
+  if (model.champion?.strategy) {
+    strategies.push(model.champion.strategy);
+    for (let i = 0; i < 8; i++) strategies.push(mutateStrategy(model.champion.strategy));
+  }
+  return strategies;
+}
+
+function ensureModelPanel() {
+  if (document.getElementById("modelPanel")) return;
+  const learningPanel = document.querySelector(".learning-panel");
+  if (!learningPanel) return;
+  const panel = document.createElement("section");
+  panel.className = "panel model-panel";
+  panel.id = "modelPanel";
+  panel.innerHTML = `
+    <div class="section-title">
+      <div>
+        <p class="section-kicker">AI交易系统</p>
+        <h2>当前模型</h2>
+      </div>
+      <span id="modelGeneration">第0代</span>
+    </div>
+    <div id="modelSummary" class="model-summary"><p class="empty">模型尚未完成训练。</p></div>
+  `;
+  learningPanel.insertAdjacentElement("afterend", panel);
+}
+
+function renderModelPanel() {
+  ensureModelPanel();
+  const generation = document.getElementById("modelGeneration");
+  const summary = document.getElementById("modelSummary");
+  if (!generation || !summary) return;
+  const model = currentModel();
+  const champion = model.champion;
+  generation.textContent = `第${model.generation || 0}代`;
+  if (!champion) {
+    summary.innerHTML = `<p class="empty">模型尚未完成训练。</p>`;
+    return;
+  }
+  summary.innerHTML = `
+    <div class="model-card">
+      <strong>${champion.label || champion.symbol} / 等级 ${champion.grade || "B"}</strong>
+      <span>行情 ${champion.regime || "unknown"} / 周期 ${champion.interval || "-"} / 候选池 ${(model.population || []).length} 组</span>
+      <span>正确率 ${pct(champion.winRate || 0)} / 交易 ${champion.trades || 0} 笔 / 盈亏比 ${Number(champion.profitFactor || 0).toFixed(2)} / 回撤 ${((champion.maxDrawdown || 0) * 100).toFixed(1)}%</span>
+      <span>参数 EMA ${champion.strategy.fast}/${champion.strategy.slow}，止损 ${champion.strategy.stopAtr}ATR，止盈 ${champion.strategy.takeProfitR}R</span>
+    </div>
+  `;
+}
+
+async function randomLearnAllMarkets() {
+  const interval = els.intervalInput.value;
+  const cfg = settings();
+  const allResults = [];
+  setBusy(true);
+  addFeedback("开始模型进化：读取当前AI模型，围绕冠军策略继续变异、筛选、替换。", true);
+  try {
+    currentModel();
+    for (const symbol of SYMBOLS) {
+      addFeedback(`模型训练 ${instruments[symbol].name} ${interval}...`);
+      const data = await fetchHistory(symbol, interval);
+      const regime = marketRegime(data.candles);
+      let bestForSymbol = null;
+      const strategies = [
+        defaultStrategy,
+        ...modelSeedStrategies(symbol, interval),
+        ...seededStrategies(symbol, interval),
+        ...Array.from({ length: 20 }, randomStrategy)
+      ];
+      const unique = new Map(strategies.map((strategy) => [`${strategy.fast}-${strategy.slow}-${strategy.rsiFloor}-${strategy.rsiCeil}-${strategy.stopAtr}-${strategy.takeProfitR}`, strategy]));
+      for (const strategy of unique.values()) {
+        const evaluation = evaluateStrategy(data.candles, cfg, strategy);
+        const result = evaluation.result;
+        if (result.trades.length < MIN_LEARNING_TRADES || evaluation.grade === "C") continue;
+        const record = makeRecord(symbol, interval, result, strategy, "模型进化");
+        record.score = evaluation.score;
+        record.grade = evaluation.grade;
+        record.regime = regime;
+        saveLearningRecord(record);
+        const scored = { symbol, data, result, strategy, record, score: evaluation.score, grade: evaluation.grade, regime };
+        allResults.push(scored);
+        if (!bestForSymbol || scored.score > bestForSymbol.score) bestForSymbol = scored;
+      }
+      if (bestForSymbol) addFeedback(`${data.label} 模型进化完成：行情 ${regime}，等级 ${bestForSymbol.grade}，正确率 ${pct(bestForSymbol.result.winRate)}。`);
+      else addFeedback(`${data.label} 本轮没有产生可替换模型的策略。`);
+      renderLeaderboard();
+    }
+    if (!allResults.length) throw new Error("本轮没有策略通过模型进化过滤。");
+    const model = updateModelFromCandidates(allResults);
+    const champion = model.champion;
+    const best = allResults.sort((a, b) => b.score - a.score)[0];
+    state.candles = best.data.candles;
+    state.best = { strategy: champion.strategy, trainResult: best.result, testResult: best.result, score: champion.score, grade: champion.grade, regime: champion.regime };
+    localStorage.setItem("paperTrader.best", JSON.stringify(state.best));
+    saveTrades(best.result.trades);
+    els.symbolInput.value = champion.symbol || best.symbol;
+    render(best.result);
+    addFeedback(`模型第${model.generation}代完成：冠军 ${champion.label || champion.symbol}，等级 ${champion.grade}，正确率 ${pct(champion.winRate || 0)}。`, true);
+  } catch (error) {
+    showError(error);
+    addFeedback(`模型进化失败：${error.message || error}`, true);
+  } finally {
+    setBusy(false);
+  }
+}
+
 function saveTrades(trades) { state.trades = trades; localStorage.setItem("paperTrader.trades", JSON.stringify(trades)); }
 function showError(error) { els.signalCard.className = "signal-card neutral"; els.signalAction.textContent = "操作失败"; els.signalReason.textContent = error.message || String(error); }
 
@@ -578,3 +753,4 @@ els.installButton.addEventListener("click", async () => { if (!state.deferredPro
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("service-worker.js").catch(() => {});
 render();
 renderLeaderboard();
+renderModelPanel();
