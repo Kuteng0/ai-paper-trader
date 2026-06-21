@@ -67,9 +67,13 @@ async function lineFollowRecommendation() {
 }
 
 async function trainingMode() {
-  assertFreeLimit("trainingRuns", FREE_LIMITS.trainingRunsPerDay, "训练模式");
   addUsage("trainingRuns");
-  addFeedback(`训练模式启动：进行AI模型训练并保存在本机。今日训练 ${getUsage("trainingRuns")}/${FREE_LIMITS.trainingRunsPerDay}。训练完成后不会自动同步云端。`, true);
+  const used = getUsage("trainingRuns");
+  if (used > FREE_LIMITS.trainingRunsPerDay) {
+    addFeedback(`训练模式今日已超过建议次数 ${FREE_LIMITS.trainingRunsPerDay} 次。本次仍会继续训练，但会消耗历史行情请求次数；训练结果只保存在本机，不会自动同步云端。`, true);
+  } else {
+    addFeedback(`训练模式启动：进行AI模型训练并保存在本机。今日训练 ${used}/${FREE_LIMITS.trainingRunsPerDay}。训练完成后不会自动同步云端。`, true);
+  }
   await randomLearnAllMarkets();
 }
 
