@@ -1,6 +1,6 @@
 "use strict";
 
-const FREE_LIMITS = { cloudWritesPerDay: 50, cloudReadsPerDay: 200, linePushesPerDay: 10, trainingRunsPerDay: 20 };
+const FREE_LIMITS = { functionRequestsPerDay: 100000, cloudWritesPerDay: 900, cloudReadsPerDay: 90000, linePushesPerDay: 10, trainingAdvisoryRunsPerDay: 20 };
 const LIVE_REFS_KEY = "paperTrader.liveRefs";
 const UNSYNCED_KEY = "paperTrader.unsynced";
 const LAST_AUTO_SYNC_KEY = "paperTrader.lastAutoSyncDate";
@@ -14,10 +14,27 @@ function assertFreeLimit(name, limit, label) {
   if (used >= limit) throw new Error(`${label}今日已达到免费保护上限 ${limit} 次。明天再用，避免超出免费额度。`);
 }
 
+function addFunctionRequestUsage(label = "function", count = 1) {
+  const used = addUsage("functionRequests") + count - 1;
+  if (used >= FREE_LIMITS.functionRequestsPerDay) {
+    addFeedback(`Cloudflare动态请求估算已达到 ${used}/${FREE_LIMITS.functionRequestsPerDay}。建议今天停止训练，避免超过免费额度。`, true);
+  } else if (used >= FREE_LIMITS.functionRequestsPerDay * 0.95) {
+    addFeedback(`Cloudflare动态请求估算已超过95%：${used}/${FREE_LIMITS.functionRequestsPerDay}。建议只做必要操作。`, true);
+  } else if (used >= FREE_LIMITS.functionRequestsPerDay * 0.8) {
+    addFeedback(`Cloudflare动态请求估算已超过80%：${used}/${FREE_LIMITS.functionRequestsPerDay}。继续训练前请注意免费额度。`, true);
+  }
+  return used;
+}
+
+function functionUsageText() {
+  return `${getUsage("functionRequests")}/${FREE_LIMITS.functionRequestsPerDay}`;
+}
+
 async function cloudJson(path, options = {}, usageName = "cloudReads") {
   const isWrite = options.method && options.method !== "GET";
   assertFreeLimit(usageName, isWrite ? FREE_LIMITS.cloudWritesPerDay : FREE_LIMITS.cloudReadsPerDay, isWrite ? "云端写入" : "云端读取");
   const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
+  addFunctionRequestUsage(path);
   addUsage(usageName);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "云端请求失败。");
@@ -69,10 +86,13 @@ async function lineFollowRecommendation() {
 async function trainingMode() {
   addUsage("trainingRuns");
   const used = getUsage("trainingRuns");
-  if (used > FREE_LIMITS.trainingRunsPerDay) {
-    addFeedback(`训练模式今日已超过建议次数 ${FREE_LIMITS.trainingRunsPerDay} 次。本次仍会继续训练，但会消耗历史行情请求次数；训练结果只保存在本机，不会自动同步云端。`, true);
+  const estimatedNext = getUsage("functionRequests") + SYMBOLS.length;
+  if (estimatedNext >= FREE_LIMITS.functionRequestsPerDay) {
+    addFeedback(`训练前提醒：Cloudflare动态请求估算将接近或超过免费额度 ${FREE_LIMITS.functionRequestsPerDay}/天。本次仍会继续，但建议今天停止追加训练。`, true);
+  } else if (used > FREE_LIMITS.trainingAdvisoryRunsPerDay) {
+    addFeedback(`训练模式今日已超过建议次数 ${FREE_LIMITS.trainingAdvisoryRunsPerDay} 次。本次仍会继续训练。当前Cloudflare动态请求估算 ${functionUsageText()}。`, true);
   } else {
-    addFeedback(`训练模式启动：进行AI模型训练并保存在本机。今日训练 ${used}/${FREE_LIMITS.trainingRunsPerDay}。训练完成后不会自动同步云端。`, true);
+    addFeedback(`训练模式启动：进行AI模型训练并保存在本机。今日训练 ${used}/${FREE_LIMITS.trainingAdvisoryRunsPerDay}，Cloudflare动态请求估算 ${functionUsageText()}。训练完成后不会自动同步云端。`, true);
   }
   await randomLearnAllMarkets();
 }
@@ -127,6 +147,7 @@ function checkMissedAutoSync() {
 }
 
 window.markUnsynced = markUnsynced;
+window.addFunctionRequestUsage = addFunctionRequestUsage;
 
 function liveRefs() {
   return JSON.parse(localStorage.getItem(LIVE_REFS_KEY) || "[]");
@@ -210,7 +231,10 @@ async function checkLiveReferenceOutcomes() {
   if (!pending.length) return;
   let changed = 0;
   for (const record of pending) {
-    const candles = await fetch(`/api/history?symbol=${encodeURIComponent(record.symbol)}&interval=${encodeURIComponent(record.interval)}&range=60d`).then((res) => res.json()).then((data) => data.candles || []).catch(() => []);
+    const candles = await fetch(`/api/history?symbol=${encodeURIComponent(record.symbol)}&interval=${encodeURIComponent(record.interval)}&range=60d`).then((res) => {
+      addFunctionRequestUsage("history");
+      return res.json();
+    }).then((data) => data.candles || []).catch(() => []);
     const later = candles.filter((candle) => new Date(candle.time).getTime() > new Date(record.createdAt).getTime());
     for (const candle of later) {
       if (record.action === "long") {

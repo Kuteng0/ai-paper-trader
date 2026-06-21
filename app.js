@@ -49,6 +49,7 @@ function settings() {
 async function fetchHistory(symbol, interval) {
   const range = instruments[symbol]?.range || "60d";
   const res = await fetch(`/api/history?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&range=${range}`);
+  window.addFunctionRequestUsage?.("history");
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "行情获取失败。");
   if (!data.candles?.length) throw new Error("没有取得可用K线。");
