@@ -151,7 +151,7 @@ async function latestTick(env, symbol) {
 }
 
 async function fetchCandles(symbol, interval) {
-  if (symbol === "BTCUSD") return fetchBinanceCandles(interval);
+  if (symbol === "BTCUSD") return fetchBtcCandles(interval);
   const endpoint = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
   endpoint.searchParams.set("range", "60d");
   endpoint.searchParams.set("interval", interval);
@@ -184,6 +184,60 @@ async function fetchBinanceCandles(interval) {
     low: round(Number(row[3])),
     close: round(Number(row[4]))
   })).filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite));
+}
+
+async function fetchBtcCandles(interval) {
+  const errors = [];
+  for (const source of [fetchBinanceCandles, fetchCoinbaseCandles, fetchKrakenCandles]) {
+    try {
+      const candles = await source(interval);
+      if (candles.length >= 80) return candles;
+      errors.push(`${source.name}: K线不足`);
+    } catch (error) {
+      errors.push(error.message || String(error));
+    }
+  }
+  throw new Error(`BTCUSD最新行情获取失败：${errors.join("；")}`);
+}
+
+async function fetchCoinbaseCandles(interval) {
+  const endpoint = new URL("https://api.exchange.coinbase.com/products/BTC-USD/candles");
+  const seconds = granularity(interval);
+  endpoint.searchParams.set("granularity", String(seconds));
+  endpoint.searchParams.set("start", new Date(Date.now() - seconds * 300 * 1000).toISOString());
+  endpoint.searchParams.set("end", new Date().toISOString());
+  const response = await fetch(endpoint.toString(), { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error(`Coinbase ${response.status}`);
+  const rows = await response.json();
+  return rows.sort((a, b) => a[0] - b[0]).map((row) => ({
+    time: new Date(row[0] * 1000).toISOString().replace("T", " ").slice(0, 16),
+    open: round(Number(row[3])),
+    high: round(Number(row[2])),
+    low: round(Number(row[1])),
+    close: round(Number(row[4]))
+  })).filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite));
+}
+
+async function fetchKrakenCandles(interval) {
+  const endpoint = new URL("https://api.kraken.com/0/public/OHLC");
+  endpoint.searchParams.set("pair", "XBTUSD");
+  endpoint.searchParams.set("interval", String(Math.max(1, Math.round(granularity(interval) / 60))));
+  const response = await fetch(endpoint.toString(), { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error(`Kraken ${response.status}`);
+  const payload = await response.json();
+  const key = Object.keys(payload.result || {}).find((name) => name !== "last");
+  const rows = key ? payload.result[key] : [];
+  return rows.map((row) => ({
+    time: new Date(Number(row[0]) * 1000).toISOString().replace("T", " ").slice(0, 16),
+    open: round(Number(row[1])),
+    high: round(Number(row[2])),
+    low: round(Number(row[3])),
+    close: round(Number(row[4]))
+  })).filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite));
+}
+
+function granularity(interval) {
+  return { "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "1d": 86400 }[interval] || 900;
 }
 
 function indicators(candles, strategy) {
