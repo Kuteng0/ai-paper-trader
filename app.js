@@ -139,6 +139,7 @@ function summarize(capital, equity, maxDrawdown, trades) {
 }
 
 const MIN_LEARNING_TRADES = 10;
+const BTC_OBSERVATION_MIN_TRADES = 4;
 
 function evaluateStrategy(candles, cfg, strategy) {
   const fullResult = runSimulation(candles, { ...cfg, strategy });
@@ -708,10 +709,10 @@ function btcTrainingPlan() {
 }
 
 function isObservationCandidate(result, score) {
-  return result.trades.length >= MIN_LEARNING_TRADES
+  return result.trades.length >= BTC_OBSERVATION_MIN_TRADES
     && Number.isFinite(score)
-    && result.winRate >= 0.44
-    && result.profitFactor >= 0.9
+    && result.winRate >= 0.40
+    && result.profitFactor >= 0.75
     && result.maxDrawdown <= 0.16;
 }
 
@@ -885,7 +886,7 @@ async function randomLearnBtcOnly() {
       for (const strategy of unique.values()) {
         const evaluation = evaluateStrategy(trainCandles, cfg, strategy);
         const result = evaluation.result;
-        if (result.trades.length < MIN_LEARNING_TRADES) continue;
+        if (result.trades.length < BTC_OBSERVATION_MIN_TRADES) continue;
         const record = makeRecord(symbol, interval, result, strategy, "BTC单独训练");
         record.score = evaluation.score + 25;
         record.grade = evaluation.grade;
