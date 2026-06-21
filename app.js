@@ -46,8 +46,8 @@ function settings() {
   };
 }
 
-async function fetchHistory(symbol, interval) {
-  const range = instruments[symbol]?.range || "60d";
+async function fetchHistory(symbol, interval, rangeOverride = null) {
+  const range = rangeOverride || instruments[symbol]?.range || "60d";
   const res = await fetch(`/api/history?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&range=${range}`);
   window.addFunctionRequestUsage?.("history");
   const data = await res.json();
@@ -324,10 +324,13 @@ function optimize() {
 }
 
 async function randomLearnAllMarkets() {
-  const interval = els.intervalInput.value;
+  const plan = randomTrainingPlan();
+  const interval = plan.interval;
   const cfg = settings();
   const allResults = [];
   setBusy(true);
+  addFeedback(`随机历史训练参数：周期 ${plan.interval}，范围 ${plan.range}，每个品种抽取随机窗口并生成48组随机策略。`, true);
+  addFeedback(`随机历史训练参数：周期 ${plan.interval}，范围 ${plan.range}，每个品种抽取随机窗口并生成48组随机策略。`, true);
   addFeedback("开始稳健训练：全品种随机参数 + Walk-Forward 多段验证。", true);
   try {
     for (const symbol of SYMBOLS) {
@@ -484,16 +487,20 @@ function seededStrategies(symbol, interval) {
 }
 
 async function randomLearnAllMarkets() {
-  const interval = els.intervalInput.value;
+  const plan = randomTrainingPlan();
+  const interval = plan.interval;
   const cfg = settings();
   const allResults = [];
   setBusy(true);
+  addFeedback(`随机历史训练参数：周期 ${plan.interval}，范围 ${plan.range}，每个品种抽取随机窗口并生成48组随机策略。`, true);
   addFeedback("开始进化训练：优秀策略变体 + 随机参数 + Walk-Forward 验证。", true);
   try {
     for (const symbol of SYMBOLS) {
       addFeedback(`正在训练 ${instruments[symbol].name} ${interval}...`);
-      const data = await fetchHistory(symbol, interval);
-      const regime = marketRegime(data.candles);
+      const data = await fetchHistory(symbol, interval, plan.range);
+      const sampled = randomTrainingWindow(data.candles);
+      const trainCandles = sampled.candles;
+      const regime = marketRegime(trainCandles);
       let bestForSymbol = null;
       const strategies = [
         defaultStrategy,
@@ -546,7 +553,7 @@ function renderLeaderboard() {
 
 function learningRecordKey(record) {
   const s = record.strategy || {};
-  return [record.symbol, record.interval, record.regime || "unknown", s.fast, s.slow, s.rsiFloor, s.rsiCeil, s.stopAtr, s.takeProfitR].join("|");
+  return [record.symbol, record.interval, record.range || "60d", record.windowKey || "full", record.regime || "unknown", s.fast, s.slow, s.rsiFloor, s.rsiCeil, s.stopAtr, s.takeProfitR].join("|");
 }
 
 function saveLearningRecord(record) {
@@ -645,6 +652,24 @@ function modelSeedStrategies(symbol, interval) {
   return strategies;
 }
 
+function randomTrainingPlan() {
+  const intervals = ["5m", "15m", "30m", "1h"];
+  const ranges = ["5d", "1mo", "60d"];
+  return {
+    interval: intervals[randomInt(0, intervals.length - 1)],
+    range: ranges[randomInt(0, ranges.length - 1)],
+    runId: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+  };
+}
+
+function randomTrainingWindow(candles) {
+  if (candles.length < 180) return { candles, windowKey: "full" };
+  const minLen = Math.min(candles.length, 160);
+  const len = randomInt(minLen, candles.length);
+  const start = randomInt(0, Math.max(0, candles.length - len));
+  return { candles: candles.slice(start, start + len), windowKey: `${start}-${start + len}` };
+}
+
 function ensureModelPanel() {
   if (document.getElementById("modelPanel")) return;
   const learningPanel = document.querySelector(".learning-panel");
@@ -688,7 +713,8 @@ function renderModelPanel() {
 }
 
 async function randomLearnAllMarkets() {
-  const interval = els.intervalInput.value;
+  const plan = randomTrainingPlan();
+  const interval = plan.interval;
   const cfg = settings();
   const allResults = [];
   setBusy(true);
@@ -697,26 +723,31 @@ async function randomLearnAllMarkets() {
     currentModel();
     for (const symbol of SYMBOLS) {
       addFeedback(`模型训练 ${instruments[symbol].name} ${interval}...`);
-      const data = await fetchHistory(symbol, interval);
-      const regime = marketRegime(data.candles);
+      const data = await fetchHistory(symbol, interval, plan.range);
+      const sampled = randomTrainingWindow(data.candles);
+      const trainCandles = sampled.candles;
+      const regime = marketRegime(trainCandles);
       let bestForSymbol = null;
       const strategies = [
         defaultStrategy,
         ...modelSeedStrategies(symbol, interval),
         ...seededStrategies(symbol, interval),
-        ...Array.from({ length: 20 }, randomStrategy)
+        ...Array.from({ length: 48 }, randomStrategy)
       ];
       const unique = new Map(strategies.map((strategy) => [`${strategy.fast}-${strategy.slow}-${strategy.rsiFloor}-${strategy.rsiCeil}-${strategy.stopAtr}-${strategy.takeProfitR}`, strategy]));
       for (const strategy of unique.values()) {
-        const evaluation = evaluateStrategy(data.candles, cfg, strategy);
+        const evaluation = evaluateStrategy(trainCandles, cfg, strategy);
         const result = evaluation.result;
         if (result.trades.length < MIN_LEARNING_TRADES || evaluation.grade === "C") continue;
         const record = makeRecord(symbol, interval, result, strategy, "模型进化");
         record.score = evaluation.score;
         record.grade = evaluation.grade;
         record.regime = regime;
+        record.range = plan.range;
+        record.windowKey = sampled.windowKey;
+        record.runId = plan.runId;
         saveLearningRecord(record);
-        const scored = { symbol, data, result, strategy, record, score: evaluation.score, grade: evaluation.grade, regime };
+        const scored = { symbol, data: { ...data, candles: trainCandles }, result, strategy, record, score: evaluation.score, grade: evaluation.grade, regime };
         allResults.push(scored);
         if (!bestForSymbol || scored.score > bestForSymbol.score) bestForSymbol = scored;
       }

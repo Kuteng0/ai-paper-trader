@@ -31,7 +31,7 @@ export async function onRequestPost({ request, env }) {
   if (!top10.length && !modelChampion) return json({ error: "AI模型还没有可用冠军策略。请先运行训练模式。" }, 400);
 
   const best = modelChampion && (!top10[0] || (modelChampion.score || 0) >= (top10[0].score || 0)) ? modelChampion : top10[0];
-  const live = await buildLivePlan(best);
+  const live = await buildLivePlan(best, env);
   const text = buildMessage(best, Math.max(1, top10.length), live);
   if (body.dryRun) {
     return json({ message: "实时盯盘检查完成。", pushed: false, selected: best, live, text });
@@ -87,9 +87,15 @@ function normalizeChampion(champion) {
   };
 }
 
-async function buildLivePlan(best) {
+async function buildLivePlan(best, env) {
   const candles = await fetchCandles(best.symbol, best.interval || "15m");
   if (candles.length < 80) return { action: "wait", actionText: "行情不足，观望", reason: "最新K线数量不足，不能计算可靠信号。" };
+
+  const tick = await latestTick(env, best.symbol);
+  if (tick?.last) {
+    const last = candles[candles.length - 1];
+    candles[candles.length - 1] = { ...last, close: tick.last, high: Math.max(last.high, tick.last), low: Math.min(last.low, tick.last) };
+  }
 
   const strategy = best.strategy;
   const ind = indicators(candles, strategy);
@@ -131,6 +137,15 @@ async function buildLivePlan(best) {
     reason: `EMA交叉 + RSI过滤触发，当前${trend}。`,
     entry, stop, target, atr: atrNow, rsi: ind.rsi[i], trend, invalidation, currentRegime
   };
+}
+
+async function latestTick(env, symbol) {
+  if (!env.LEARNING_KV) return null;
+  const ticks = await env.LEARNING_KV.get("ticks:latest", "json").catch(() => null);
+  const tick = ticks?.[symbol];
+  if (!tick?.last || !tick.updatedAt) return null;
+  const ageMs = Date.now() - new Date(tick.updatedAt).getTime();
+  return ageMs <= 5 * 60 * 1000 ? tick : null;
 }
 
 async function fetchCandles(symbol, interval) {

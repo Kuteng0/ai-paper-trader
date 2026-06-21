@@ -15,9 +15,10 @@ const PRE_CLOSE_KEY = "paperTrader.preClose";
 const MARKET_ACTIVITY_KEY = "paperTrader.marketActivity";
 const UNSYNCED_KEY = "paperTrader.unsynced";
 const LAST_AUTO_SYNC_KEY = "paperTrader.lastAutoSyncDate";
-const REALTIME_FAST_INTERVAL_MS = 10 * 1000;
-const REALTIME_NORMAL_INTERVAL_MS = 30 * 1000;
-const REALTIME_SLOW_INTERVAL_MS = 2 * 60 * 1000;
+const REALTIME_ULTRA_INTERVAL_MS = 2 * 1000;
+const REALTIME_FAST_INTERVAL_MS = 5 * 1000;
+const REALTIME_NORMAL_INTERVAL_MS = 15 * 1000;
+const REALTIME_SLOW_INTERVAL_MS = 60 * 1000;
 const REALTIME_IDLE_INTERVAL_MS = 5 * 60 * 1000;
 const PRE_CLOSE_MINUTES = 15;
 let realtimeMonitorRunning = false;
@@ -143,8 +144,9 @@ function adaptiveDelayMs(session = cfdSessionState()) {
   if (ratio >= 0.98) return REALTIME_IDLE_INTERVAL_MS;
   if (ratio >= 0.90) return pending ? REALTIME_SLOW_INTERVAL_MS : REALTIME_IDLE_INTERVAL_MS;
   if (ratio >= 0.80) return pending || Number(activity.active || 0) >= 3 ? REALTIME_NORMAL_INTERVAL_MS : REALTIME_SLOW_INTERVAL_MS;
-  if (Number(activity.quiet || 0) >= 6 && !pending) return REALTIME_SLOW_INTERVAL_MS;
-  if (pending || Number(activity.active || 0) >= 2) return REALTIME_FAST_INTERVAL_MS;
+  if (Number(activity.quiet || 0) >= 8 && !pending) return REALTIME_SLOW_INTERVAL_MS;
+  if (pending || Number(activity.active || 0) >= 4) return REALTIME_ULTRA_INTERVAL_MS;
+  if (Number(activity.active || 0) >= 2) return REALTIME_FAST_INTERVAL_MS;
   return REALTIME_NORMAL_INTERVAL_MS;
 }
 
