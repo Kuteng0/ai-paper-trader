@@ -33,6 +33,9 @@ export async function onRequestPost({ request, env }) {
   const best = modelChampion && (!top10[0] || (modelChampion.score || 0) >= (top10[0].score || 0)) ? modelChampion : top10[0];
   const live = await buildLivePlan(best);
   const text = buildMessage(best, Math.max(1, top10.length), live);
+  if (body.dryRun) {
+    return json({ message: "实时盯盘检查完成。", pushed: false, selected: best, live, text });
+  }
   if (body.notifyOnlyOnSignal && !["long", "short"].includes(live.action)) {
     return json({ message: "当前没有符合策略的入场信号，未发送LINE。", pushed: false, selected: best, live });
   }

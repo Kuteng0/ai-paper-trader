@@ -10,8 +10,11 @@ const FREE_LIMITS = {
 
 const LIVE_REFS_KEY = "paperTrader.liveRefs";
 const LIVE_MONITOR_KEY = "paperTrader.liveMonitor";
+const LAST_SIGNAL_KEY = "paperTrader.lastSignalKey";
 const UNSYNCED_KEY = "paperTrader.unsynced";
 const LAST_AUTO_SYNC_KEY = "paperTrader.lastAutoSyncDate";
+const REALTIME_MONITOR_INTERVAL_MS = 30 * 1000;
+let realtimeMonitorRunning = false;
 
 function todayKey() { return new Date().toISOString().slice(0, 10); }
 function usageKey(name) { return `paperTrader.usage.${todayKey()}.${name}`; }
@@ -50,6 +53,19 @@ async function cloudJson(path, options = {}, usageName = "cloudReads") {
   return data;
 }
 
+async function lineJson(body) {
+  const response = await fetch("/api/line-recommend", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  addFunctionRequestUsage("/api/line-recommend");
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "LINE请求失败。");
+  if (data.pushed) addUsage("linePushes");
+  return data;
+}
+
 async function syncCloudLearning() {
   const records = state.learning || [];
   addFeedback(`正在同步云端：准备上传 ${records.length} 条学习记录...`);
@@ -84,21 +100,14 @@ function confirmCloudAction(kind) {
 }
 
 async function lineFollowRecommendation() {
-  assertFreeLimit("linePushes", FREE_LIMITS.linePushesPerDay, "LINE推送");
   localStorage.setItem(LIVE_MONITOR_KEY, "on");
-  addFeedback("实盘LINE监控已开启：有符合策略的入场才推送；之后会追踪止盈、止损和提前出场事件。");
-  await checkLiveReferenceOutcomes().catch(() => {});
-  const data = await cloudJson("/api/line-recommend", {
-    method: "POST",
-    body: JSON.stringify({ records: state.learning || [], model: state.model || null, notifyOnlyOnSignal: true })
-  }, "linePushes");
-  saveLiveReference(data);
-  addFeedback(`${data.message || "实盘LINE检查完成。"} 今日LINE推送 ${getUsage("linePushes")}/${FREE_LIMITS.linePushesPerDay}。`, true);
+  addFeedback("实时盯盘已开启：PC端保持页面打开时，每30秒检查一次新入场、止盈、止损和提前出场。");
+  await runRealtimeMonitorCycle("manual");
 }
 
 async function sendLineEvent(text) {
   assertFreeLimit("linePushes", FREE_LIMITS.linePushesPerDay, "LINE推送");
-  return cloudJson("/api/line-recommend", { method: "POST", body: JSON.stringify({ eventText: text }) }, "linePushes");
+  return lineJson({ eventText: text });
 }
 
 async function trainingMode() {
@@ -235,6 +244,71 @@ function saveLiveReference(data) {
   addFeedback(`已记录实盘LINE追踪：${record.label} ${record.action === "long" ? "做多" : "做空"}，等待后续行情验证止盈、止损或提前出场。`, true);
 }
 
+function liveSignalKey(selected, live) {
+  if (!selected || !live) return "";
+  return [
+    selected.symbol,
+    selected.interval || "15m",
+    live.action,
+    Math.round(Number(live.entry || 0) * 100),
+    Math.round(Number(live.stop || 0) * 100),
+    Math.round(Number(live.target || 0) * 100)
+  ].join("|");
+}
+
+function isDuplicateLiveSignal(selected, live) {
+  const key = liveSignalKey(selected, live);
+  if (!key) return true;
+  if (localStorage.getItem(LAST_SIGNAL_KEY) === key) return true;
+  return liveRefs().some((record) => {
+    if (record.status !== "pending") return false;
+    if (record.symbol !== selected.symbol || record.interval !== (selected.interval || "15m") || record.action !== live.action) return false;
+    const base = Math.max(1, Math.abs(Number(live.entry || 0)));
+    return Math.abs(Number(record.entry || 0) - Number(live.entry || 0)) / base < 0.001;
+  });
+}
+
+function rememberLiveSignal(selected, live) {
+  const key = liveSignalKey(selected, live);
+  if (key) localStorage.setItem(LAST_SIGNAL_KEY, key);
+}
+
+async function checkNewEntrySignal() {
+  if (getUsage("linePushes") >= FREE_LIMITS.linePushesPerDay) {
+    addFeedback(`LINE今日推送已达到保护上限 ${FREE_LIMITS.linePushesPerDay}，实时盯盘仍会检查行情，但不会继续推送。`, true);
+    return;
+  }
+  const probe = await lineJson({ records: state.learning || [], model: state.model || null, dryRun: true });
+  const live = probe.live;
+  const selected = probe.selected;
+  if (!live || !selected || !["long", "short"].includes(live.action)) {
+    addFeedback(`实时盯盘：暂无新入场信号。Cloudflare动态请求 ${functionUsageText()}。`);
+    return;
+  }
+  if (isDuplicateLiveSignal(selected, live)) {
+    addFeedback(`实时盯盘：${selected.label} 仍是同一入场信号，避免重复LINE。`);
+    return;
+  }
+  const pushed = await lineJson({ records: state.learning || [], model: state.model || null, notifyOnlyOnSignal: true });
+  if (pushed.pushed) {
+    rememberLiveSignal(pushed.selected, pushed.live);
+    saveLiveReference(pushed);
+    addFeedback(`${pushed.message || "实时入场信号已发送LINE。"} 今日LINE推送 ${getUsage("linePushes")}/${FREE_LIMITS.linePushesPerDay}。`, true);
+  }
+}
+
+async function runRealtimeMonitorCycle(source = "timer") {
+  if (realtimeMonitorRunning) return;
+  realtimeMonitorRunning = true;
+  try {
+    await checkLiveReferenceOutcomes().catch((error) => addFeedback(`实时追踪检查失败：${error.message || error}`, true));
+    await checkNewEntrySignal().catch((error) => addFeedback(`实时入场检查失败：${error.message || error}`, true));
+    if (source === "manual") addFeedback("实时盯盘首轮检查完成。PC端保持页面打开即可持续监控。", true);
+  } finally {
+    realtimeMonitorRunning = false;
+  }
+}
+
 function buildLiveEventMessage(record, eventType, price, time, reason = "") {
   const title = eventType === "win" ? "AI实盘参考：止盈触发" : eventType === "loss" ? "AI实盘参考：止损触发" : "AI实盘参考：策略变动/提前出场";
   const side = record.action === "long" ? "做多" : "做空";
@@ -347,6 +421,6 @@ updateUnsyncedStatus();
 checkMissedAutoSync();
 scheduleMidnightAutoSync();
 window.setInterval(() => {
-  if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") checkLiveReferenceOutcomes().catch(() => {});
-}, 5 * 60 * 1000);
-addFeedback("免费保护模式已启用：打开App不自动读取云端；点击“开启实盘LINE”后才会监控并消耗Cloudflare/LINE额度。", true);
+  if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") runRealtimeMonitorCycle().catch(() => {});
+}, REALTIME_MONITOR_INTERVAL_MS);
+addFeedback("免费保护模式已启用：打开App不自动读取云端；点击“开启实盘LINE”后按30秒近实时监控。", true);
