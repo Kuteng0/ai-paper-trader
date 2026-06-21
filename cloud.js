@@ -12,9 +12,12 @@ const LIVE_REFS_KEY = "paperTrader.liveRefs";
 const LIVE_MONITOR_KEY = "paperTrader.liveMonitor";
 const LAST_SIGNAL_KEY = "paperTrader.lastSignalKey";
 const PRE_CLOSE_KEY = "paperTrader.preClose";
+const MARKET_ACTIVITY_KEY = "paperTrader.marketActivity";
 const UNSYNCED_KEY = "paperTrader.unsynced";
 const LAST_AUTO_SYNC_KEY = "paperTrader.lastAutoSyncDate";
-const REALTIME_ACTIVE_INTERVAL_MS = 10 * 1000;
+const REALTIME_FAST_INTERVAL_MS = 10 * 1000;
+const REALTIME_NORMAL_INTERVAL_MS = 30 * 1000;
+const REALTIME_SLOW_INTERVAL_MS = 2 * 60 * 1000;
 const REALTIME_IDLE_INTERVAL_MS = 5 * 60 * 1000;
 const PRE_CLOSE_MINUTES = 15;
 let realtimeMonitorRunning = false;
@@ -84,11 +87,70 @@ function cfdSessionState(date = jstNow()) {
   }
 
   const beforeClose = open && day >= 1 && day <= 5 && minute >= closeMinute - PRE_CLOSE_MINUTES && minute < closeMinute;
-  return { open, beforeClose, reason, summer, closeMinute, reopenMinute, nextDelayMs: open ? REALTIME_ACTIVE_INTERVAL_MS : REALTIME_IDLE_INTERVAL_MS };
+  return { open, beforeClose, reason, summer, closeMinute, reopenMinute, nextDelayMs: open ? REALTIME_NORMAL_INTERVAL_MS : REALTIME_IDLE_INTERVAL_MS };
 }
 
 function preCloseKey(date = jstNow()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function usageRatio() {
+  return getUsage("functionRequests") / FREE_LIMITS.functionRequestsPerDay;
+}
+
+function marketActivityState() {
+  return JSON.parse(localStorage.getItem(MARKET_ACTIVITY_KEY) || "{\"lastKey\":\"\",\"lastEntry\":0,\"quiet\":0,\"active\":0,\"lastSignalAt\":null}");
+}
+
+function saveMarketActivityState(info) {
+  localStorage.setItem(MARKET_ACTIVITY_KEY, JSON.stringify(info));
+}
+
+function updateMarketActivityFromProbe(probe) {
+  const info = marketActivityState();
+  const live = probe?.live || {};
+  const selected = probe?.selected || {};
+  const entry = Number(live.entry || 0);
+  const key = `${selected.symbol || "-"}|${selected.interval || "-"}|${live.currentRegime || "unknown"}|${live.action || "wait"}`;
+  const lastEntry = Number(info.lastEntry || 0);
+  const move = lastEntry ? Math.abs(entry - lastEntry) / Math.max(1, Math.abs(lastEntry)) : 0;
+  const changed = key !== info.lastKey || move >= 0.00035 || ["long", "short"].includes(live.action);
+  if (changed) {
+    info.active = Math.min(6, Number(info.active || 0) + 1);
+    info.quiet = 0;
+    info.lastSignalAt = new Date().toISOString();
+  } else {
+    info.quiet = Math.min(12, Number(info.quiet || 0) + 1);
+    info.active = Math.max(0, Number(info.active || 0) - 1);
+  }
+  info.lastKey = key;
+  info.lastEntry = entry;
+  info.lastMove = move;
+  info.updatedAt = new Date().toISOString();
+  saveMarketActivityState(info);
+  return info;
+}
+
+function hasPendingLiveRefs() {
+  return liveRefs().some((record) => record.status === "pending");
+}
+
+function adaptiveDelayMs(session = cfdSessionState()) {
+  if (!session.open) return REALTIME_IDLE_INTERVAL_MS;
+  const ratio = usageRatio();
+  const activity = marketActivityState();
+  const pending = hasPendingLiveRefs();
+  if (ratio >= 0.98) return REALTIME_IDLE_INTERVAL_MS;
+  if (ratio >= 0.90) return pending ? REALTIME_SLOW_INTERVAL_MS : REALTIME_IDLE_INTERVAL_MS;
+  if (ratio >= 0.80) return pending || Number(activity.active || 0) >= 3 ? REALTIME_NORMAL_INTERVAL_MS : REALTIME_SLOW_INTERVAL_MS;
+  if (Number(activity.quiet || 0) >= 6 && !pending) return REALTIME_SLOW_INTERVAL_MS;
+  if (pending || Number(activity.active || 0) >= 2) return REALTIME_FAST_INTERVAL_MS;
+  return REALTIME_NORMAL_INTERVAL_MS;
+}
+
+function adaptiveDelayText(ms) {
+  if (ms < 60000) return `${Math.round(ms / 1000)}秒`;
+  return `${Math.round(ms / 60000)}分钟`;
 }
 
 async function cloudJson(path, options = {}, usageName = "cloudReads") {
@@ -150,7 +212,7 @@ function confirmCloudAction(kind) {
 
 async function lineFollowRecommendation() {
   localStorage.setItem(LIVE_MONITOR_KEY, "on");
-  addFeedback("实时盯盘已开启：交易时间每10秒检查一次；维护/休市时间自动降为5分钟低频检查。");
+  addFeedback("自适应实时盯盘已开启：行情活跃时最快10秒检查，安静或额度超过90%时自动降频。");
   await runRealtimeMonitorCycle("manual");
   scheduleRealtimeMonitor();
 }
@@ -329,10 +391,11 @@ async function checkNewEntrySignal() {
     return;
   }
   const probe = await lineJson({ records: state.learning || [], model: state.model || null, dryRun: true });
+  const activity = updateMarketActivityFromProbe(probe);
   const live = probe.live;
   const selected = probe.selected;
   if (!live || !selected || !["long", "short"].includes(live.action)) {
-    addFeedback(`实时盯盘：暂无新入场信号。Cloudflare动态请求 ${functionUsageText()}。`);
+    addFeedback(`实时盯盘：暂无新入场信号。活跃 ${activity.active || 0} / 安静 ${activity.quiet || 0}，Cloudflare动态请求 ${functionUsageText()}。`);
     return;
   }
   if (isDuplicateLiveSignal(selected, live)) {
@@ -353,6 +416,7 @@ async function runPreClosePreparation(session) {
   localStorage.setItem(PRE_CLOSE_KEY, key);
   addFeedback("关盘前预处理：获取最后一轮行情，让AI保存次日参考快照。", true);
   const probe = await lineJson({ records: state.learning || [], model: state.model || null, dryRun: true });
+  updateMarketActivityFromProbe(probe);
   const snapshot = {
     date: key,
     savedAt: new Date().toISOString(),
@@ -386,10 +450,15 @@ async function runRealtimeMonitorCycle(source = "timer") {
 function scheduleRealtimeMonitor() {
   if (realtimeTimerId) window.clearTimeout(realtimeTimerId);
   const session = cfdSessionState();
+  const delay = adaptiveDelayMs(session);
   realtimeTimerId = window.setTimeout(async () => {
     if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") await runRealtimeMonitorCycle().catch(() => {});
     scheduleRealtimeMonitor();
-  }, session.nextDelayMs);
+  }, delay);
+  if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") {
+    const ratio = Math.round(usageRatio() * 100);
+    addFeedback(`自适应调度：下一轮 ${adaptiveDelayText(delay)} 后。额度 ${ratio}% / ${session.reason}。`);
+  }
 }
 
 function buildLiveEventMessage(record, eventType, price, time, reason = "") {
@@ -504,4 +573,4 @@ updateUnsyncedStatus();
 checkMissedAutoSync();
 scheduleMidnightAutoSync();
 if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") scheduleRealtimeMonitor();
-addFeedback("免费保护模式已启用：打开App不自动读取云端；点击“开启实时LINE”后，交易时间按10秒近实时监控。", true);
+addFeedback("免费保护模式已启用：点击“开启实时LINE”后，按行情活跃度和Cloudflare额度自适应调度。", true);
