@@ -1,6 +1,6 @@
 "use strict";
 
-const SYMBOLS = ["ES=F", "NQ=F", "GC=F", "CL=F", "^N225", "YM=F", "NG=F"];
+const SYMBOLS = ["BTCUSD", "ES=F", "NQ=F", "GC=F", "CL=F", "^N225", "YM=F", "NG=F"];
 
 const state = {
   candles: [],
@@ -25,6 +25,7 @@ const els = {
 };
 
 const instruments = {
+  "BTCUSD": { name: "BTCUSD 比特币", range: "60d", profile: "24小时交易，适合单独训练；实盘前必须确认XTrend Lite报价、点差和最小交易单位。" },
   "ES=F": { name: "标普500期货 ES", range: "60d", profile: "流动性强、节奏相对稳定，建议作为核心模拟品种。" },
   "NQ=F": { name: "纳指期货 NQ", range: "60d", profile: "机会多但波动大，必须严格止损。" },
   "YM=F": { name: "道指期货 YM", range: "60d", profile: "波动节奏较慢，可作为辅助测试品种。" },

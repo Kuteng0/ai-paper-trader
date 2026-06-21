@@ -1,4 +1,5 @@
 const ALLOWED = {
+  "BTCUSD": "BTCUSD 比特币",
   "NQ=F": "纳指期货 NQ",
   "ES=F": "标普500期货 ES",
   "YM=F": "道指期货 YM",
@@ -20,7 +21,11 @@ export async function onRequestGet({ request }) {
   if (!ALLOWED[symbol]) return json({ error: "不支持的品种。" }, 400);
   if (!INTERVALS.has(interval)) return json({ error: "不支持的周期。" }, 400);
   if (!RANGES.has(range)) return json({ error: "不支持的数据范围。" }, 400);
+  if (symbol === "BTCUSD") return fetchBinanceHistory(interval, range);
+  return fetchYahooHistory(symbol, interval, range);
+}
 
+async function fetchYahooHistory(symbol, interval, range) {
   const endpoint = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
   endpoint.searchParams.set("range", range);
   endpoint.searchParams.set("interval", interval);
@@ -30,7 +35,6 @@ export async function onRequestGet({ request }) {
     headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" },
     cf: { cacheTtl: interval === "1d" ? 3600 : 300, cacheEverything: true }
   });
-
   if (!response.ok) return json({ error: "行情数据源暂时不可用。" }, 502);
 
   const payload = await response.json();
@@ -50,6 +54,38 @@ export async function onRequestGet({ request }) {
   return json({ symbol, label: ALLOWED[symbol], interval, range, source: "Yahoo Finance chart", candles }, 200, {
     "Cache-Control": interval === "1d" ? "public, max-age=3600" : "public, max-age=300"
   });
+}
+
+async function fetchBinanceHistory(interval, range) {
+  const endpoint = new URL("https://api.binance.com/api/v3/klines");
+  endpoint.searchParams.set("symbol", "BTCUSDT");
+  endpoint.searchParams.set("interval", interval);
+  endpoint.searchParams.set("limit", "1000");
+  endpoint.searchParams.set("startTime", String(Date.now() - rangeMs(range)));
+
+  const response = await fetch(endpoint.toString(), {
+    headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" },
+    cf: { cacheTtl: interval === "1d" ? 300 : 15, cacheEverything: true }
+  });
+  if (!response.ok) return json({ error: "BTCUSD行情源暂时不可用。" }, 502);
+
+  const rows = await response.json();
+  const candles = rows.map((row) => ({
+    time: new Date(row[0]).toISOString().replace("T", " ").slice(0, 16),
+    open: round(Number(row[1])),
+    high: round(Number(row[2])),
+    low: round(Number(row[3])),
+    close: round(Number(row[4]))
+  })).filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite));
+
+  return json({ symbol: "BTCUSD", label: "BTCUSD 比特币", interval, range, source: "Binance BTCUSDT klines", candles }, 200, {
+    "Cache-Control": interval === "1d" ? "public, max-age=300" : "public, max-age=15"
+  });
+}
+
+function rangeMs(range) {
+  const day = 24 * 60 * 60 * 1000;
+  return { "5d": 5 * day, "1mo": 30 * day, "60d": 60 * day, "6mo": 180 * day, "1y": 365 * day, "2y": 730 * day }[range] || 60 * day;
 }
 
 function round(value) {

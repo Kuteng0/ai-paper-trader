@@ -149,6 +149,7 @@ async function latestTick(env, symbol) {
 }
 
 async function fetchCandles(symbol, interval) {
+  if (symbol === "BTCUSD") return fetchBinanceCandles(interval);
   const endpoint = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
   endpoint.searchParams.set("range", "60d");
   endpoint.searchParams.set("interval", interval);
@@ -163,6 +164,23 @@ async function fetchCandles(symbol, interval) {
   return timestamps.map((ts, i) => ({
     time: new Date(ts * 1000).toISOString().replace("T", " ").slice(0, 16),
     open: round(quote.open?.[i]), high: round(quote.high?.[i]), low: round(quote.low?.[i]), close: round(quote.close?.[i])
+  })).filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite));
+}
+
+async function fetchBinanceCandles(interval) {
+  const endpoint = new URL("https://api.binance.com/api/v3/klines");
+  endpoint.searchParams.set("symbol", "BTCUSDT");
+  endpoint.searchParams.set("interval", interval);
+  endpoint.searchParams.set("limit", "1000");
+  const response = await fetch(endpoint.toString(), { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error("BTCUSD最新行情获取失败，无法生成实盘参考。");
+  const rows = await response.json();
+  return rows.map((row) => ({
+    time: new Date(row[0]).toISOString().replace("T", " ").slice(0, 16),
+    open: round(Number(row[1])),
+    high: round(Number(row[2])),
+    low: round(Number(row[3])),
+    close: round(Number(row[4]))
   })).filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite));
 }
 
