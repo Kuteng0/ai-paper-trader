@@ -119,7 +119,8 @@ function updateMarketActivityFromProbe(probe) {
   const key = `${selected.symbol || "-"}|${selected.interval || "-"}|${live.currentRegime || "unknown"}|${live.action || "wait"}`;
   const lastEntry = Number(info.lastEntry || 0);
   const move = lastEntry ? Math.abs(entry - lastEntry) / Math.max(1, Math.abs(lastEntry)) : 0;
-  const changed = key !== info.lastKey || move >= 0.00035 || ["long", "short"].includes(live.action);
+  const btcMode = localStorage.getItem(LIVE_SYMBOL_KEY) === "BTCUSD";
+  const changed = key !== info.lastKey || move >= (btcMode ? 0.00008 : 0.00035) || ["long", "short"].includes(live.action);
   if (changed) {
     info.active = Math.min(6, Number(info.active || 0) + 1);
     info.quiet = 0;

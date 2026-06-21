@@ -93,7 +93,7 @@ async function buildLivePlan(best, env) {
   const candles = await fetchCandles(best.symbol, best.interval || "15m");
   if (candles.length < 80) return { action: "wait", actionText: "行情不足，观望", reason: "最新K线数量不足，不能计算可靠信号。" };
 
-  const tick = await latestTick(env, best.symbol);
+  const tick = await latestMarketTick(env, best.symbol);
   if (tick?.last) {
     const last = candles[candles.length - 1];
     candles[candles.length - 1] = { ...last, close: tick.last, high: Math.max(last.high, tick.last), low: Math.min(last.low, tick.last) };
@@ -148,6 +148,49 @@ async function latestTick(env, symbol) {
   if (!tick?.last || !tick.updatedAt) return null;
   const ageMs = Date.now() - new Date(tick.updatedAt).getTime();
   return ageMs <= 5 * 60 * 1000 ? tick : null;
+}
+
+async function latestMarketTick(env, symbol) {
+  const bridged = await latestTick(env, symbol);
+  if (bridged) return bridged;
+  if (symbol !== "BTCUSD") return null;
+  return latestBtcTicker();
+}
+
+async function latestBtcTicker() {
+  const errors = [];
+  for (const source of [latestBinanceTicker, latestCoinbaseTicker, latestKrakenTicker]) {
+    try {
+      const tick = await source();
+      if (tick?.last) return tick;
+    } catch (error) {
+      errors.push(error.message || String(error));
+    }
+  }
+  return null;
+}
+
+async function latestBinanceTicker() {
+  const response = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error(`Binance ticker ${response.status}`);
+  const data = await response.json();
+  return { symbol: "BTCUSD", label: "BTCUSD", last: Number(data.price), source: "Binance ticker", updatedAt: new Date().toISOString() };
+}
+
+async function latestCoinbaseTicker() {
+  const response = await fetch("https://api.exchange.coinbase.com/products/BTC-USD/ticker", { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error(`Coinbase ticker ${response.status}`);
+  const data = await response.json();
+  return { symbol: "BTCUSD", label: "BTCUSD", bid: Number(data.bid), ask: Number(data.ask), last: Number(data.price), source: "Coinbase ticker", updatedAt: new Date().toISOString() };
+}
+
+async function latestKrakenTicker() {
+  const response = await fetch("https://api.kraken.com/0/public/Ticker?pair=XBTUSD", { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error(`Kraken ticker ${response.status}`);
+  const data = await response.json();
+  const key = Object.keys(data.result || {})[0];
+  const last = key ? Number(data.result[key]?.c?.[0]) : NaN;
+  return { symbol: "BTCUSD", label: "BTCUSD", last, source: "Kraken ticker", updatedAt: new Date().toISOString() };
 }
 
 async function fetchCandles(symbol, interval) {
