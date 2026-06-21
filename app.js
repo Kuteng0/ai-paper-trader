@@ -573,6 +573,7 @@ function saveLearningRecord(record) {
     .slice(0, 300);
   localStorage.setItem("paperTrader.learning", JSON.stringify(state.learning));
   window.markUnsynced?.("learning");
+  renderBtcModelPanel();
 }
 
 function currentModel() {
@@ -687,6 +688,7 @@ function ensureModelPanel() {
       <span id="modelGeneration">第0代</span>
     </div>
     <div id="modelSummary" class="model-summary"><p class="empty">模型尚未完成训练。</p></div>
+    <div id="btcModelSummary" class="model-summary btc-model-summary"><p class="empty">BTCUSD尚未完成单独训练。</p></div>
   `;
   learningPanel.insertAdjacentElement("afterend", panel);
 }
@@ -701,14 +703,44 @@ function renderModelPanel() {
   generation.textContent = `第${model.generation || 0}代`;
   if (!champion) {
     summary.innerHTML = `<p class="empty">模型尚未完成训练。</p>`;
+    renderBtcModelPanel();
     return;
   }
   summary.innerHTML = `
     <div class="model-card">
-      <strong>${champion.label || champion.symbol} / 等级 ${champion.grade || "B"}</strong>
+      <strong>${champion.label || champion.symbol} / 等级 ${champion.grade || "B"} / 评分 ${Math.round(Number(champion.score || 0))}</strong>
       <span>行情 ${champion.regime || "unknown"} / 周期 ${champion.interval || "-"} / 候选池 ${(model.population || []).length} 组</span>
       <span>正确率 ${pct(champion.winRate || 0)} / 交易 ${champion.trades || 0} 笔 / 盈亏比 ${Number(champion.profitFactor || 0).toFixed(2)} / 回撤 ${((champion.maxDrawdown || 0) * 100).toFixed(1)}%</span>
       <span>参数 EMA ${champion.strategy.fast}/${champion.strategy.slow}，止损 ${champion.strategy.stopAtr}ATR，止盈 ${champion.strategy.takeProfitR}R</span>
+    </div>
+  `;
+  renderBtcModelPanel();
+}
+
+function bestBtcModel() {
+  const modelPopulation = Array.isArray(state.model?.population) ? state.model.population : [];
+  const fromModel = modelPopulation.filter((item) => item.symbol === "BTCUSD" && item.strategy);
+  const fromLearning = state.learning.filter((item) => item.symbol === "BTCUSD" && item.strategy && item.grade !== "C");
+  return [...fromModel, ...fromLearning]
+    .sort((a, b) => (Number(b.score || 0) - Number(a.score || 0)) || (Number(b.winRate || 0) - Number(a.winRate || 0)))
+    [0] || null;
+}
+
+function renderBtcModelPanel() {
+  const target = document.getElementById("btcModelSummary");
+  if (!target) return;
+  const btc = bestBtcModel();
+  if (!btc) {
+    target.innerHTML = `<div class="model-card"><strong>BTCUSD 单独模型</strong><span>尚未完成BTC单独训练。点击“BTC单独训练”生成策略。</span></div>`;
+    return;
+  }
+  const s = btc.strategy || {};
+  target.innerHTML = `
+    <div class="model-card btc-model-card">
+      <strong>BTCUSD 单独模型 / 等级 ${btc.grade || "B"} / 评分 ${Math.round(Number(btc.score || 0))}</strong>
+      <span>来源 ${btc.source || "模型种群"} / 周期 ${btc.interval || "-"} / 范围 ${btc.range || "-"} / 窗口 ${btc.windowKey || "-"}</span>
+      <span>正确率 ${pct(Number(btc.winRate || 0))} / 交易 ${btc.trades || 0} 笔 / 盈亏比 ${Number(btc.profitFactor || 0).toFixed(2)} / 回撤 ${((btc.maxDrawdown || 0) * 100).toFixed(1)}%</span>
+      <span>参数 EMA ${s.fast}/${s.slow}，RSI ${s.rsiFloor}/${s.rsiCeil}，止损 ${s.stopAtr}ATR，止盈 ${s.takeProfitR}R</span>
     </div>
   `;
 }

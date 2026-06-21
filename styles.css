@@ -332,6 +332,12 @@ label input, label select {
   line-height: 1.45;
   margin-top: 4px;
 }
+.btc-model-summary {
+  margin-top: 10px;
+}
+.btc-model-card {
+  border-left-color: var(--yellow);
+}
 .feedback-item {
   padding: 10px;
   color: var(--muted);
