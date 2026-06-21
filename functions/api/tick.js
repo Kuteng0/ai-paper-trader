@@ -1,5 +1,9 @@
 const KEY = "ticks:latest";
 
+export function onRequestOptions() {
+  return new Response(null, { status: 204, headers: corsHeaders() });
+}
+
 export async function onRequestGet({ env }) {
   if (!env.LEARNING_KV) return json({ error: "Cloudflare KV 尚未配置。" }, 500);
   const ticks = await env.LEARNING_KV.get(KEY, "json");
@@ -40,5 +44,13 @@ function num(value) {
 }
 
 function json(body, status = 200) {
-  return Response.json(body, { status, headers: { "Access-Control-Allow-Origin": "*" } });
+  return Response.json(body, { status, headers: corsHeaders() });
+}
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
 }
