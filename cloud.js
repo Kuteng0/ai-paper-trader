@@ -1,7 +1,15 @@
 "use strict";
 
-const FREE_LIMITS = { functionRequestsPerDay: 100000, cloudWritesPerDay: 900, cloudReadsPerDay: 90000, linePushesPerDay: 10, trainingAdvisoryRunsPerDay: 20 };
+const FREE_LIMITS = {
+  functionRequestsPerDay: 100000,
+  cloudWritesPerDay: 900,
+  cloudReadsPerDay: 90000,
+  linePushesPerDay: 10,
+  trainingAdvisoryRunsPerDay: 20
+};
+
 const LIVE_REFS_KEY = "paperTrader.liveRefs";
+const LIVE_MONITOR_KEY = "paperTrader.liveMonitor";
 const UNSYNCED_KEY = "paperTrader.unsynced";
 const LAST_AUTO_SYNC_KEY = "paperTrader.lastAutoSyncDate";
 
@@ -9,6 +17,7 @@ function todayKey() { return new Date().toISOString().slice(0, 10); }
 function usageKey(name) { return `paperTrader.usage.${todayKey()}.${name}`; }
 function getUsage(name) { return Number(localStorage.getItem(usageKey(name)) || "0"); }
 function addUsage(name) { const next = getUsage(name) + 1; localStorage.setItem(usageKey(name), String(next)); return next; }
+
 function assertFreeLimit(name, limit, label) {
   const used = getUsage(name);
   if (used >= limit) throw new Error(`${label}今日已达到免费保护上限 ${limit} 次。明天再用，避免超出免费额度。`);
@@ -71,16 +80,25 @@ function confirmCloudAction(kind) {
   if (kind === "sync") {
     return window.confirm(`确认同步云端？\n\n将把本机 ${count} 条AI学习记录上传到 Cloudflare KV，并可能覆盖/合并云端策略库。\n\n确认继续？`);
   }
-  return window.confirm(`确认恢复云端？\n\n将从 Cloudflare KV 读取云端策略库，并替换本机当前AI学习记录。\n建议先确认你已经同步过重要训练结果。\n\n确认继续？`);
+  return window.confirm("确认恢复云端？\n\n将从 Cloudflare KV 读取云端策略库，并替换本机当前AI学习记录。\n建议先确认你已经同步过重要训练结果。\n\n确认继续？");
 }
 
 async function lineFollowRecommendation() {
   assertFreeLimit("linePushes", FREE_LIMITS.linePushesPerDay, "LINE推送");
-  addFeedback("正在生成实盘参考：使用本机当前AI模型、读取行情、计算止损/止盈/OCO；不会自动同步云端。");
+  localStorage.setItem(LIVE_MONITOR_KEY, "on");
+  addFeedback("实盘LINE监控已开启：有符合策略的入场才推送；之后会追踪止盈、止损和提前出场事件。");
   await checkLiveReferenceOutcomes().catch(() => {});
-  const data = await cloudJson("/api/line-recommend", { method: "POST", body: JSON.stringify({ records: state.learning || [], model: state.model || null }) }, "linePushes");
+  const data = await cloudJson("/api/line-recommend", {
+    method: "POST",
+    body: JSON.stringify({ records: state.learning || [], model: state.model || null, notifyOnlyOnSignal: true })
+  }, "linePushes");
   saveLiveReference(data);
-  addFeedback(`${data.message || "实盘参考LINE已发送。"} 今日LINE推送 ${getUsage("linePushes")}/${FREE_LIMITS.linePushesPerDay}。`, true);
+  addFeedback(`${data.message || "实盘LINE检查完成。"} 今日LINE推送 ${getUsage("linePushes")}/${FREE_LIMITS.linePushesPerDay}。`, true);
+}
+
+async function sendLineEvent(text) {
+  assertFreeLimit("linePushes", FREE_LIMITS.linePushesPerDay, "LINE推送");
+  return cloudJson("/api/line-recommend", { method: "POST", body: JSON.stringify({ eventText: text }) }, "linePushes");
 }
 
 async function trainingMode() {
@@ -158,43 +176,29 @@ function saveLiveRefs(records) {
   renderLiveReferenceLog();
 }
 
-function ensureLiveReferencePanel() {
-  if (document.getElementById("liveReferenceLog")) return;
-  const learningPanel = document.querySelector(".learning-panel");
-  if (!learningPanel) return;
-  const panel = document.createElement("section");
-  panel.className = "panel live-reference-panel";
-  panel.innerHTML = `
-    <div class="section-title">
-      <div>
-        <p class="section-kicker">实盘参考追踪</p>
-        <h2>LINE建议结果</h2>
-      </div>
-      <span id="liveReferenceStats">0 条</span>
-    </div>
-    <div id="liveReferenceLog" class="live-reference-log"><p class="empty">还没有可追踪的实盘参考。</p></div>
-  `;
-  learningPanel.insertAdjacentElement("afterend", panel);
-}
-
 function renderLiveReferenceLog() {
-  ensureLiveReferencePanel();
   const log = document.getElementById("liveReferenceLog");
   const stats = document.getElementById("liveReferenceStats");
   if (!log || !stats) return;
   const records = liveRefs().slice().reverse();
-  const closed = records.filter((record) => record.status === "win" || record.status === "loss");
+  const closed = records.filter((record) => ["win", "loss", "exit"].includes(record.status));
   const wins = closed.filter((record) => record.status === "win").length;
-  stats.textContent = closed.length ? `正确率 ${Math.round(wins / closed.length * 100)}%` : `${records.length} 条`;
+  stats.textContent = closed.length ? `完成 ${closed.length} / 止盈率 ${Math.round(wins / closed.length * 100)}%` : `${records.length} 条`;
   log.innerHTML = records.length ? records.slice(0, 20).map((record) => `
     <div class="live-reference-item ${record.status}">
-      <div>
-        <strong>${record.label} / ${record.action === "long" ? "做多" : "做空"} / ${record.status === "pending" ? "追踪中" : record.status === "win" ? "止盈" : "止损"}</strong>
-        <span>${new Date(record.createdAt).toLocaleString("ja-JP")} / 等级 ${record.grade || "B"} / 正确率 ${Math.round((record.winRate || 0) * 100)}%</span>
-        <small>入场 ${fmtLive(record.entry)} / 止损 ${fmtLive(record.stop)} / 止盈 ${fmtLive(record.target)}</small>
-      </div>
+      <strong>${record.label} / ${record.action === "long" ? "做多" : "做空"} / ${liveStatusText(record.status)}</strong>
+      <span>${new Date(record.createdAt).toLocaleString("ja-JP")} / 等级 ${record.grade || "B"} / 正确率 ${Math.round((record.winRate || 0) * 100)}%</span>
+      <small>入场 ${fmtLive(record.entry)} / 止损 ${fmtLive(record.stop)} / 止盈 ${fmtLive(record.target)}</small>
+      ${record.exitReason ? `<small>变动：${record.exitReason}</small>` : ""}
     </div>
   `).join("") : `<p class="empty">还没有可追踪的实盘参考。</p>`;
+}
+
+function liveStatusText(status) {
+  if (status === "win") return "止盈";
+  if (status === "loss") return "止损";
+  if (status === "exit") return "提前出场";
+  return "追踪中";
 }
 
 function fmtLive(value) {
@@ -215,14 +219,55 @@ function saveLiveReference(data) {
     entry: live.entry,
     stop: live.stop,
     target: live.target,
+    strategy: selected.strategy,
+    regime: selected.regime || live.currentRegime || "unknown",
+    score: selected.score,
     grade: selected.grade || "B",
     winRate: selected.winRate,
-    status: "pending"
+    profitFactor: selected.profitFactor,
+    maxDrawdown: selected.maxDrawdown,
+    status: "pending",
+    lastNotified: "entry"
   };
   const records = liveRefs();
   records.push(record);
   saveLiveRefs(records);
-  addFeedback(`已记录实盘参考追踪：${record.label} ${record.action === "long" ? "做多" : "做空"}，等待后续行情验证止盈/止损。`, true);
+  addFeedback(`已记录实盘LINE追踪：${record.label} ${record.action === "long" ? "做多" : "做空"}，等待后续行情验证止盈、止损或提前出场。`, true);
+}
+
+function buildLiveEventMessage(record, eventType, price, time, reason = "") {
+  const title = eventType === "win" ? "AI实盘参考：止盈触发" : eventType === "loss" ? "AI实盘参考：止损触发" : "AI实盘参考：策略变动/提前出场";
+  const side = record.action === "long" ? "做多" : "做空";
+  return [
+    title,
+    `品种：${record.label}`,
+    `方向：${side} / 周期：${record.interval}`,
+    `参考入场：${fmtLive(record.entry)}`,
+    `止损：${fmtLive(record.stop)}`,
+    `止盈：${fmtLive(record.target)}`,
+    `OCO：止损 ${fmtLive(record.stop)} + 止盈 ${fmtLive(record.target)}`,
+    `当前/触发价：${fmtLive(price)} / 时间：${time || "-"}`,
+    `策略等级：${record.grade || "B"} / 历史正确率：${Math.round((record.winRate || 0) * 100)}%`,
+    reason ? `原因：${reason}` : "",
+    "注意：这是实盘参考事件。真实仓位请以外貨EX CFD实际成交价和已设置OCO为准。"
+  ].filter(Boolean).join("\n");
+}
+
+function earlyExitSignal(record, candles) {
+  if (!record.strategy || candles.length < 80) return null;
+  const latest = candles[candles.length - 1];
+  const regime = typeof marketRegime === "function" ? marketRegime(candles) : "unknown";
+  const expected = record.regime || "unknown";
+  if (expected !== "unknown" && regime !== "unknown" && expected !== regime) {
+    return { price: latest.close, time: latest.time, reason: `行情状态从 ${expected} 变为 ${regime}，策略环境不匹配。` };
+  }
+  if (typeof indicators !== "function" || typeof signalAt !== "function") return null;
+  const ind = indicators(candles, record.strategy);
+  const side = signalAt(candles.length - 1, candles, ind, record.strategy);
+  if ((record.action === "long" && side === "short") || (record.action === "short" && side === "long")) {
+    return { price: latest.close, time: latest.time, reason: "出现反向策略信号，建议确认是否提前出场。" };
+  }
+  return null;
 }
 
 async function checkLiveReferenceOutcomes() {
@@ -238,28 +283,59 @@ async function checkLiveReferenceOutcomes() {
     const later = candles.filter((candle) => new Date(candle.time).getTime() > new Date(record.createdAt).getTime());
     for (const candle of later) {
       if (record.action === "long") {
-        if (candle.low <= record.stop) { record.status = "loss"; record.closedAt = candle.time; changed++; break; }
-        if (candle.high >= record.target) { record.status = "win"; record.closedAt = candle.time; changed++; break; }
+        if (candle.low <= record.stop) {
+          record.status = "loss"; record.closedAt = candle.time; record.exitPrice = record.stop; record.exitReason = "价格触发止损。"; changed++;
+          await sendLineEvent(buildLiveEventMessage(record, "loss", record.stop, candle.time, record.exitReason)).catch((error) => addFeedback(`LINE止损通知失败：${error.message || error}`, true));
+          break;
+        }
+        if (candle.high >= record.target) {
+          record.status = "win"; record.closedAt = candle.time; record.exitPrice = record.target; record.exitReason = "价格触发止盈。"; changed++;
+          await sendLineEvent(buildLiveEventMessage(record, "win", record.target, candle.time, record.exitReason)).catch((error) => addFeedback(`LINE止盈通知失败：${error.message || error}`, true));
+          break;
+        }
       } else {
-        if (candle.high >= record.stop) { record.status = "loss"; record.closedAt = candle.time; changed++; break; }
-        if (candle.low <= record.target) { record.status = "win"; record.closedAt = candle.time; changed++; break; }
+        if (candle.high >= record.stop) {
+          record.status = "loss"; record.closedAt = candle.time; record.exitPrice = record.stop; record.exitReason = "价格触发止损。"; changed++;
+          await sendLineEvent(buildLiveEventMessage(record, "loss", record.stop, candle.time, record.exitReason)).catch((error) => addFeedback(`LINE止损通知失败：${error.message || error}`, true));
+          break;
+        }
+        if (candle.low <= record.target) {
+          record.status = "win"; record.closedAt = candle.time; record.exitPrice = record.target; record.exitReason = "价格触发止盈。"; changed++;
+          await sendLineEvent(buildLiveEventMessage(record, "win", record.target, candle.time, record.exitReason)).catch((error) => addFeedback(`LINE止盈通知失败：${error.message || error}`, true));
+          break;
+        }
+      }
+    }
+    if (record.status === "pending") {
+      const exit = earlyExitSignal(record, candles);
+      if (exit) {
+        record.status = "exit";
+        record.closedAt = exit.time;
+        record.exitPrice = exit.price;
+        record.exitReason = exit.reason;
+        changed++;
+        await sendLineEvent(buildLiveEventMessage(record, "exit", exit.price, exit.time, exit.reason)).catch((error) => addFeedback(`LINE提前出场通知失败：${error.message || error}`, true));
       }
     }
   }
   if (changed) {
     saveLiveRefs(records);
-    const closed = records.filter((record) => record.status === "win" || record.status === "loss");
+    const closed = records.filter((record) => ["win", "loss", "exit"].includes(record.status));
     const wins = closed.filter((record) => record.status === "win").length;
     const rate = closed.length ? Math.round(wins / closed.length * 100) : 0;
-    addFeedback(`实盘参考追踪已更新：已结算 ${closed.length} 条，正确率 ${rate}%（止盈 ${wins} / 止损 ${closed.length - wins}）。`, true);
+    addFeedback(`实盘LINE追踪已更新：已完成 ${closed.length} 条，止盈率 ${rate}%（止盈 ${wins} / 其他 ${closed.length - wins}）。`, true);
   }
 }
 
 function bindCloudButtons() {
-  const training = document.getElementById("trainingModeButton"), follow = document.getElementById("followModeButton"), sync = document.getElementById("syncCloudButton"), restore = document.getElementById("restoreCloudButton"), cloudStatus = document.getElementById("cloudStatus");
+  const training = document.getElementById("trainingModeButton");
+  const follow = document.getElementById("followModeButton");
+  const sync = document.getElementById("syncCloudButton");
+  const restore = document.getElementById("restoreCloudButton");
+  const cloudStatus = document.getElementById("cloudStatus");
   if (cloudStatus) cloudStatus.textContent = "免费保护模式";
   if (training) training.addEventListener("click", () => trainingMode().catch((error) => { showError(error); addFeedback(`训练模式失败：${error.message || error}`, true); }));
-  if (follow) follow.addEventListener("click", () => lineFollowRecommendation().catch((error) => { showError(error); addFeedback(`实盘参考LINE失败：${error.message || error}`, true); }));
+  if (follow) follow.addEventListener("click", () => lineFollowRecommendation().catch((error) => { showError(error); addFeedback(`实盘LINE失败：${error.message || error}`, true); }));
   if (sync) sync.addEventListener("click", () => { if (!confirmCloudAction("sync")) { addFeedback("已取消云端同步。", true); return; } syncCloudLearning().catch((error) => { showError(error); addFeedback(`云端同步失败：${error.message || error}`, true); }); });
   if (restore) restore.addEventListener("click", () => { if (!confirmCloudAction("restore")) { addFeedback("已取消云端恢复。", true); return; } restoreCloudLearning().catch((error) => { showError(error); addFeedback(`云端恢复失败：${error.message || error}`, true); }); });
 }
@@ -270,4 +346,7 @@ renderLiveReferenceLog();
 updateUnsyncedStatus();
 checkMissedAutoSync();
 scheduleMidnightAutoSync();
-addFeedback("免费保护模式已启用：打开App不自动读取云端；只有点击按钮才会消耗Cloudflare/LINE额度。", true);
+window.setInterval(() => {
+  if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") checkLiveReferenceOutcomes().catch(() => {});
+}, 5 * 60 * 1000);
+addFeedback("免费保护模式已启用：打开App不自动读取云端；点击“开启实盘LINE”后才会监控并消耗Cloudflare/LINE额度。", true);

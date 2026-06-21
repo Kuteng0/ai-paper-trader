@@ -22,8 +22,8 @@
       <section class="hero-panel" aria-label="实盘参考">
         <div class="section-title compact">
           <div>
-            <p class="section-kicker">当前模式</p>
-            <h2>训练后再参考，实盘必须设止损/OCO</h2>
+            <p class="section-kicker">当前信号</p>
+            <h2>有策略才提醒，实盘必须先设止损/OCO</h2>
           </div>
           <span id="cloudStatus" class="status-pill">免费保护模式</span>
         </div>
@@ -32,13 +32,13 @@
             <span id="marketMode">等待操作</span>
             <strong id="signalAction">免费保护模式已启用</strong>
           </div>
-          <p id="signalReason">先训练策略库，再用“实盘参考LINE”从正确率前10策略中选择；有信号时给出方向、参考入场、止损、止盈/OCO，无信号时明确提示观望。</p>
+          <p id="signalReason">先训练AI模型。点击“开启实盘LINE”后，只有出现符合策略的入场、提前出场、止盈或止损事件时才发送LINE。</p>
         </div>
         <div class="primary-actions">
-          <button id="followModeButton" class="primary-button" type="button">实盘参考LINE</button>
+          <button id="followModeButton" class="primary-button" type="button">开启实盘LINE</button>
           <button id="trainingModeButton" class="accent-button" type="button">AI训练升级</button>
         </div>
-        <p class="risk-note">这里不会自动下真实订单。下单前必须核对外貨EX CFD 实际报价、点差、滑点，并先设置止损/OCO。</p>
+        <p class="risk-note">不会自动下真实订单。下单前必须核对外貨EX CFD 实际报价、点差和滑点，并立刻设置止损/OCO。</p>
       </section>
 
       <section class="status-grid" aria-label="AI学习成果摘要">
@@ -51,7 +51,7 @@
           <strong id="pnlValue">¥0</strong>
         </article>
         <article>
-          <span>当前正确率</span>
+          <span>策略正确率</span>
           <strong id="winRateValue">0%</strong>
         </article>
         <article>
@@ -60,33 +60,51 @@
         </article>
       </section>
 
+      <section id="modelPanel" class="panel model-panel">
+        <div class="section-title">
+          <div>
+            <p class="section-kicker">AI交易系统</p>
+            <h2>当前模型</h2>
+          </div>
+          <span id="modelGeneration">第0代</span>
+        </div>
+        <div id="modelSummary" class="model-summary"><p class="empty">模型尚未完成训练。</p></div>
+      </section>
+
       <section class="panel learning-panel">
         <div class="section-title">
           <div>
-            <p class="section-kicker">AI 学习成果</p>
-            <h2>策略库与排行榜</h2>
+            <p class="section-kicker">学习与云端</p>
+            <h2>模型保存状态</h2>
           </div>
           <span id="learnCount">0 条记录</span>
         </div>
-        <button id="randomLearnButton" class="wide-button" type="button">AI训练升级</button>
         <div class="cloud-actions">
           <button id="syncCloudButton" type="button">同步云端</button>
           <button id="restoreCloudButton" type="button">恢复云端</button>
         </div>
-        <p class="hint">训练结果和AI模型先写入本机，不会训练一次就上传。你可以手动同步云端；如果App在0:00打开且发现未同步内容，会自动同步一次。</p>
+        <p class="hint">训练结果先保存在本机。手动同步云端；或App在0:00打开且有未同步内容时自动同步一次。</p>
         <div id="feedbackLog" class="feedback-log" aria-label="操作反馈">
           <p class="empty">操作反馈会显示在这里。</p>
         </div>
       </section>
 
-      <section class="panel controls">
+      <section class="panel live-reference-panel">
         <div class="section-title">
           <div>
-            <p class="section-kicker">行情与模拟</p>
-            <h2>选择品种和周期</h2>
+            <p class="section-kicker">实盘LINE追踪</p>
+            <h2>入场、变动、止盈止损</h2>
           </div>
-          <span id="dataStatus">0 根K线</span>
+          <span id="liveReferenceStats">0 条</span>
         </div>
+        <div id="liveReferenceLog" class="live-reference-log"><p class="empty">还没有可追踪的实盘参考。</p></div>
+      </section>
+
+      <details class="panel controls" open>
+        <summary class="panel-summary">
+          <span>行情与模拟</span>
+          <small id="dataStatus">0 根K线</small>
+        </summary>
         <div class="form-grid market-picker">
           <label>
             品种
@@ -119,37 +137,34 @@
           <button id="runButton" type="button">运行模拟</button>
           <button id="optimizeButton" type="button">AI训练升级</button>
         </div>
+        <button id="randomLearnButton" class="hidden-control" type="button">AI训练升级</button>
         <details class="advanced-box">
           <summary>更多设置</summary>
           <div class="button-row secondary-row">
             <button id="sampleButton" type="button">加载样本</button>
             <label class="file-button">导入CSV<input id="csvInput" type="file" accept=".csv,text/csv"></label>
           </div>
-          <p class="hint">行情用于策略参考。实盘前必须确认外貨EX CFD 实际报价、点差和滑点。</p>
         </details>
-      </section>
+      </details>
 
-      <section class="panel risk-panel">
-        <div class="section-title">
-          <div>
-            <p class="section-kicker">实盘纪律</p>
-            <h2>风控参数</h2>
-          </div>
+      <details class="panel risk-panel">
+        <summary class="panel-summary">
+          <span>实盘纪律</span>
           <button id="resetButton" class="text-button" type="button">重置模拟</button>
-        </div>
+        </summary>
         <div class="form-grid">
           <label>初始资金<input id="capitalInput" type="number" min="10000" step="1000" value="50000"></label>
           <label>单笔风险%<input id="riskInput" type="number" min="0.1" max="3" step="0.1" value="0.5"></label>
           <label>日亏损上限%<input id="dailyLossInput" type="number" min="0.5" max="5" step="0.1" value="1"></label>
           <label>最多持仓K线<input id="maxHoldInput" type="number" min="3" max="80" step="1" value="18"></label>
         </div>
-      </section>
+      </details>
 
       <section class="panel metrics">
         <div class="section-title">
           <div>
             <p class="section-kicker">最近一次模拟</p>
-            <h2>实盘策略记录</h2>
+            <h2>策略表现</h2>
           </div>
           <span id="tradeCount">0 笔</span>
         </div>
@@ -164,7 +179,7 @@
       <section class="panel leaderboard-panel">
         <div class="section-title">
           <div>
-            <p class="section-kicker">按正确率排序</p>
+            <p class="section-kicker">综合分排序</p>
             <h2>前10策略排行榜</h2>
           </div>
           <button id="clearBoardButton" class="text-button" type="button">清空榜单</button>
@@ -174,18 +189,15 @@
         </div>
       </section>
 
-      <section class="panel log-panel">
-        <div class="section-title">
-          <div>
-            <p class="section-kicker">历史记录</p>
-            <h2>模拟交易日志</h2>
-          </div>
+      <details class="panel log-panel">
+        <summary class="panel-summary">
+          <span>模拟交易日志</span>
           <button id="exportButton" class="text-button" type="button">导出</button>
-        </div>
+        </summary>
         <div id="tradeLog" class="trade-log">
           <p class="empty">还没有模拟交易。</p>
         </div>
-      </section>
+      </details>
     </main>
     <script src="app.js"></script>
     <script src="cloud.js"></script>

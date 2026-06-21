@@ -173,11 +173,15 @@ function randomFloat(min, max) { return Math.round((min + Math.random() * (max -
 function scoreResult(result, capital) {
   const trades = result.trades.length;
   const grade = gradeStrategy(result);
-  let score = result.winRate * 250 + Math.min(result.profitFactor, 4) * 90 + result.avgR * 140 + result.netProfit / Math.max(1, capital) * 450 - result.maxDrawdown * 950 + Math.min(trades, 40) * 3;
+  const sampleScore = Math.min(trades, 60) * 4;
+  const expectancy = result.trades.length ? result.trades.reduce((sum, trade) => sum + trade.rValue, 0) / result.trades.length : 0;
+  let score = result.winRate * 220 + Math.min(result.profitFactor, 4) * 100 + result.avgR * 150 + expectancy * 120 + result.netProfit / Math.max(1, capital) * 420 - result.maxDrawdown * 1200 + sampleScore;
   if (trades < MIN_LEARNING_TRADES) score -= 300;
+  if (trades < 18) score -= 90;
   if (result.profitFactor < 1.15) score -= 180;
   if (result.avgR <= 0) score -= 180;
   if (result.maxDrawdown > 0.08) score -= 220;
+  if (result.maxDrawdown > 0.12) score -= 400;
   if (grade === "A") score += 120;
   if (grade === "C") score -= 120;
   return { score, grade };
@@ -604,6 +608,7 @@ function updateModelFromCandidates(candidates) {
     netProfit: item.result?.netProfit,
     profitFactor: item.result?.profitFactor,
     maxDrawdown: item.result?.maxDrawdown,
+    expectancy: item.result?.trades?.length ? item.result.trades.reduce((sum, trade) => sum + trade.rValue, 0) / item.result.trades.length : 0,
     updatedAt: new Date().toISOString()
   }))];
   const map = new Map();

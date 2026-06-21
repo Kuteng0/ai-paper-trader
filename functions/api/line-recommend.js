@@ -8,6 +8,15 @@ export async function onRequestPost({ request, env }) {
   }
 
   const body = await request.json().catch(() => ({}));
+  if (body.eventText) {
+    const response = await pushLine(env, String(body.eventText).slice(0, 4500));
+    if (!response.ok) {
+      const detail = await response.text();
+      return json({ error: `LINE推送失败：${response.status} ${detail}` }, 502);
+    }
+    return json({ message: "LINE事件通知已发送。", pushed: true });
+  }
+
   const cloudState = normalizeCloudState(await env.LEARNING_KV.get(KEY, "json"));
   const requestState = normalizeCloudState(body);
   const activeState = requestState.records.length || requestState.model ? requestState : cloudState;
@@ -24,7 +33,22 @@ export async function onRequestPost({ request, env }) {
   const best = modelChampion && (!top10[0] || (modelChampion.score || 0) >= (top10[0].score || 0)) ? modelChampion : top10[0];
   const live = await buildLivePlan(best);
   const text = buildMessage(best, Math.max(1, top10.length), live);
-  const response = await fetch("https://api.line.me/v2/bot/message/push", {
+  if (body.notifyOnlyOnSignal && !["long", "short"].includes(live.action)) {
+    return json({ message: "当前没有符合策略的入场信号，未发送LINE。", pushed: false, selected: best, live });
+  }
+
+  const response = await pushLine(env, text);
+
+  if (!response.ok) {
+    const detail = await response.text();
+    return json({ error: `LINE推送失败：${response.status} ${detail}` }, 502);
+  }
+
+  return json({ message: `LINE已发送：${best.label}，等级${best.grade}，${live.actionText}。`, pushed: true, selected: best, live });
+}
+
+function pushLine(env, text) {
+  return fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
@@ -35,13 +59,6 @@ export async function onRequestPost({ request, env }) {
       messages: [{ type: "text", text }]
     })
   });
-
-  if (!response.ok) {
-    const detail = await response.text();
-    return json({ error: `LINE推送失败：${response.status} ${detail}` }, 502);
-  }
-
-  return json({ message: `LINE已发送：${best.label}，等级${best.grade}，${live.actionText}。`, selected: best, live });
 }
 
 function normalizeCloudState(value) {

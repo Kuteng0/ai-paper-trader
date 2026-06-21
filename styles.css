@@ -86,6 +86,37 @@ h2 { font-size: 17px; line-height: 1.25; letter-spacing: 0; }
   margin: 10px 0;
 }
 
+details.panel { display: block; }
+details.panel > *:not(summary) { margin-top: 12px; }
+details.panel:not([open]) { padding-bottom: 10px; }
+
+.panel-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 900;
+  list-style: none;
+}
+.panel-summary::-webkit-details-marker { display: none; }
+.panel-summary::after {
+  content: "⌄";
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+details[open] > .panel-summary::after { content: "⌃"; }
+.panel-summary small {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.panel-summary .text-button { margin-left: auto; }
+
 .section-title {
   display: flex;
   align-items: flex-start;
@@ -146,6 +177,13 @@ h2 { font-size: 17px; line-height: 1.25; letter-spacing: 0; }
 .cloud-actions { margin-top: 8px; }
 .cloud-actions button { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); }
 .secondary-row { margin-top: 8px; }
+.hidden-control {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
 
 .status-grid {
   display: grid;
@@ -246,7 +284,7 @@ label input, label select {
 }
 .feedback-log {
   margin-top: 10px;
-  max-height: 210px;
+  max-height: 170px;
 }
 .feedback-item, .rank-item, .trade-item, .live-reference-item {
   border: 1px solid var(--line);
@@ -260,6 +298,8 @@ label input, label select {
 }
 .live-reference-item.win { border-left-color: var(--green); }
 .live-reference-item.loss { border-left-color: var(--red); }
+.live-reference-item.exit { border-left-color: var(--blue); }
+.live-reference-item.entry { border-left-color: var(--cyan); }
 .live-reference-item strong {
   display: block;
   font-size: 14px;
