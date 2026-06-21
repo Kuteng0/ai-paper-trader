@@ -11,12 +11,18 @@ const FREE_LIMITS = {
 const LIVE_REFS_KEY = "paperTrader.liveRefs";
 const LIVE_MONITOR_KEY = "paperTrader.liveMonitor";
 const LAST_SIGNAL_KEY = "paperTrader.lastSignalKey";
+const PRE_CLOSE_KEY = "paperTrader.preClose";
 const UNSYNCED_KEY = "paperTrader.unsynced";
 const LAST_AUTO_SYNC_KEY = "paperTrader.lastAutoSyncDate";
-const REALTIME_MONITOR_INTERVAL_MS = 30 * 1000;
+const REALTIME_ACTIVE_INTERVAL_MS = 10 * 1000;
+const REALTIME_IDLE_INTERVAL_MS = 5 * 60 * 1000;
+const PRE_CLOSE_MINUTES = 15;
 let realtimeMonitorRunning = false;
+let realtimeTimerId = null;
 
 function todayKey() { return new Date().toISOString().slice(0, 10); }
+function jstNow() { return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" })); }
+function minutesOfDay(date) { return date.getHours() * 60 + date.getMinutes(); }
 function usageKey(name) { return `paperTrader.usage.${todayKey()}.${name}`; }
 function getUsage(name) { return Number(localStorage.getItem(usageKey(name)) || "0"); }
 function addUsage(name) { const next = getUsage(name) + 1; localStorage.setItem(usageKey(name), String(next)); return next; }
@@ -40,6 +46,49 @@ function addFunctionRequestUsage(label = "function", count = 1) {
 
 function functionUsageText() {
   return `${getUsage("functionRequests")}/${FREE_LIMITS.functionRequestsPerDay}`;
+}
+
+function isUsSummerTimeForTrading(date = jstNow()) {
+  const year = date.getFullYear();
+  const secondSundayMarch = nthWeekdayOfMonth(year, 2, 0, 2);
+  const firstSundayNovember = nthWeekdayOfMonth(year, 10, 0, 1);
+  return date >= secondSundayMarch && date < firstSundayNovember;
+}
+
+function nthWeekdayOfMonth(year, monthIndex, weekday, nth) {
+  const date = new Date(year, monthIndex, 1);
+  const offset = (weekday - date.getDay() + 7) % 7;
+  date.setDate(1 + offset + (nth - 1) * 7);
+  return date;
+}
+
+function cfdSessionState(date = jstNow()) {
+  const day = date.getDay();
+  const minute = minutesOfDay(date);
+  const summer = isUsSummerTimeForTrading(date);
+  const closeMinute = summer ? 5 * 60 + 50 : 6 * 60 + 50;
+  const reopenMinute = summer ? 6 * 60 + 10 : 7 * 60 + 10;
+  const mondayOpenMinute = 7 * 60;
+  const saturdayCloseMinute = closeMinute;
+
+  let open = true;
+  let reason = "主要CFD交易时间";
+  if (day === 0) {
+    open = false; reason = "周日休市";
+  } else if (day === 1 && minute < mondayOpenMinute) {
+    open = false; reason = "周一开盘前";
+  } else if (day === 6 && minute >= saturdayCloseMinute) {
+    open = false; reason = "周末休市";
+  } else if (day >= 2 && day <= 5 && minute >= closeMinute && minute < reopenMinute) {
+    open = false; reason = "每日维护/关盘时间";
+  }
+
+  const beforeClose = open && day >= 1 && day <= 5 && minute >= closeMinute - PRE_CLOSE_MINUTES && minute < closeMinute;
+  return { open, beforeClose, reason, summer, closeMinute, reopenMinute, nextDelayMs: open ? REALTIME_ACTIVE_INTERVAL_MS : REALTIME_IDLE_INTERVAL_MS };
+}
+
+function preCloseKey(date = jstNow()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 async function cloudJson(path, options = {}, usageName = "cloudReads") {
@@ -101,8 +150,9 @@ function confirmCloudAction(kind) {
 
 async function lineFollowRecommendation() {
   localStorage.setItem(LIVE_MONITOR_KEY, "on");
-  addFeedback("实时盯盘已开启：PC端保持页面打开时，每30秒检查一次新入场、止盈、止损和提前出场。");
+  addFeedback("实时盯盘已开启：交易时间每10秒检查一次；维护/休市时间自动降为5分钟低频检查。");
   await runRealtimeMonitorCycle("manual");
+  scheduleRealtimeMonitor();
 }
 
 async function sendLineEvent(text) {
@@ -297,16 +347,49 @@ async function checkNewEntrySignal() {
   }
 }
 
+async function runPreClosePreparation(session) {
+  const key = preCloseKey();
+  if (localStorage.getItem(PRE_CLOSE_KEY) === key) return;
+  localStorage.setItem(PRE_CLOSE_KEY, key);
+  addFeedback("关盘前预处理：获取最后一轮行情，让AI保存次日参考快照。", true);
+  const probe = await lineJson({ records: state.learning || [], model: state.model || null, dryRun: true });
+  const snapshot = {
+    date: key,
+    savedAt: new Date().toISOString(),
+    session,
+    selected: probe.selected || null,
+    live: probe.live || null,
+    modelGeneration: state.model?.generation || 0
+  };
+  localStorage.setItem("paperTrader.preCloseSnapshot", JSON.stringify(snapshot));
+  addFeedback(`关盘前预处理完成：${probe.selected?.label || "无策略"} / ${probe.live?.actionText || "观望"}。`, true);
+}
+
 async function runRealtimeMonitorCycle(source = "timer") {
   if (realtimeMonitorRunning) return;
   realtimeMonitorRunning = true;
   try {
+    const session = cfdSessionState();
+    if (!session.open) {
+      addFeedback(`实时盯盘暂停高频检查：${session.reason}。下一轮低频检查。`);
+      return;
+    }
     await checkLiveReferenceOutcomes().catch((error) => addFeedback(`实时追踪检查失败：${error.message || error}`, true));
     await checkNewEntrySignal().catch((error) => addFeedback(`实时入场检查失败：${error.message || error}`, true));
+    if (session.beforeClose) await runPreClosePreparation(session).catch((error) => addFeedback(`关盘前预处理失败：${error.message || error}`, true));
     if (source === "manual") addFeedback("实时盯盘首轮检查完成。PC端保持页面打开即可持续监控。", true);
   } finally {
     realtimeMonitorRunning = false;
   }
+}
+
+function scheduleRealtimeMonitor() {
+  if (realtimeTimerId) window.clearTimeout(realtimeTimerId);
+  const session = cfdSessionState();
+  realtimeTimerId = window.setTimeout(async () => {
+    if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") await runRealtimeMonitorCycle().catch(() => {});
+    scheduleRealtimeMonitor();
+  }, session.nextDelayMs);
 }
 
 function buildLiveEventMessage(record, eventType, price, time, reason = "") {
@@ -420,7 +503,5 @@ renderLiveReferenceLog();
 updateUnsyncedStatus();
 checkMissedAutoSync();
 scheduleMidnightAutoSync();
-window.setInterval(() => {
-  if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") runRealtimeMonitorCycle().catch(() => {});
-}, REALTIME_MONITOR_INTERVAL_MS);
-addFeedback("免费保护模式已启用：打开App不自动读取云端；点击“开启实盘LINE”后按30秒近实时监控。", true);
+if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") scheduleRealtimeMonitor();
+addFeedback("免费保护模式已启用：打开App不自动读取云端；点击“开启实时LINE”后，交易时间按10秒近实时监控。", true);
