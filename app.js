@@ -616,9 +616,11 @@ function saveLearningRecord(record) {
 function currentModel() {
   if (state.model && typeof state.model === "object") return state.model;
   state.model = {
-    version: 1,
+    version: 2,
     generation: 0,
     champion: null,
+    generalChampion: null,
+    btcChampion: null,
     population: [],
     updatedAt: null,
     notes: "AI model initializes from robust strategy search."
@@ -666,8 +668,13 @@ function updateModelFromCandidates(candidates) {
     if (!previousItem || (item.score || 0) > (previousItem.score || 0)) map.set(key, item);
   }
   const population = [...map.values()].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 30);
+  const livePopulation = population.filter((item) => item.liveEligible !== false);
+  const generalChampion = livePopulation.find((item) => item.symbol !== "BTCUSD") || model.generalChampion || (model.champion?.symbol !== "BTCUSD" ? model.champion : null);
+  const btcChampion = population.find((item) => item.symbol === "BTCUSD") || model.btcChampion || (model.champion?.symbol === "BTCUSD" ? model.champion : null);
   model.population = population;
-  model.champion = population.find((item) => item.liveEligible !== false && item.grade !== "观察") || model.champion;
+  model.generalChampion = generalChampion;
+  model.btcChampion = btcChampion;
+  model.champion = generalChampion || livePopulation[0] || model.champion;
   model.generation = (model.generation || 0) + 1;
   model.updatedAt = new Date().toISOString();
   model.notes = "Champion evolves from population, walk-forward validation, regime filter, and live-reference tracking.";
@@ -681,11 +688,16 @@ function modelSeedStrategies(symbol, interval) {
     .filter((item) => item.symbol === symbol && item.interval === interval && item.strategy)
     .slice(0, 8);
   const strategies = [];
+  const symbolChampion = symbol === "BTCUSD" ? model.btcChampion : model.generalChampion;
+  if (symbolChampion?.strategy) {
+    strategies.push(symbolChampion.strategy);
+    for (let i = 0; i < 8; i++) strategies.push(mutateStrategy(symbolChampion.strategy));
+  }
   for (const item of seeds) {
     strategies.push(item.strategy);
     for (let i = 0; i < 5; i++) strategies.push(mutateStrategy(item.strategy));
   }
-  if (model.champion?.strategy) {
+  if (model.champion?.strategy && model.champion.symbol === symbol) {
     strategies.push(model.champion.strategy);
     for (let i = 0; i < 8; i++) strategies.push(mutateStrategy(model.champion.strategy));
   }
@@ -755,7 +767,7 @@ function renderModelPanel() {
   const summary = document.getElementById("modelSummary");
   if (!generation || !summary) return;
   const model = currentModel();
-  const champion = model.champion;
+  const champion = model.generalChampion || (model.champion?.symbol !== "BTCUSD" ? model.champion : null);
   generation.textContent = `第${model.generation || 0}代`;
   if (!champion) {
     summary.innerHTML = `<p class="empty">模型尚未完成训练。</p>`;
@@ -775,9 +787,10 @@ function renderModelPanel() {
 
 function bestBtcModel() {
   const modelPopulation = Array.isArray(state.model?.population) ? state.model.population : [];
+  const fromChampion = state.model?.btcChampion?.strategy ? [state.model.btcChampion] : [];
   const fromModel = modelPopulation.filter((item) => item.symbol === "BTCUSD" && item.strategy);
   const fromLearning = state.learning.filter((item) => item.symbol === "BTCUSD" && item.strategy && item.grade !== "C");
-  return [...fromModel, ...fromLearning]
+  return [...fromChampion, ...fromModel, ...fromLearning]
     .sort((a, b) => (Number(b.score || 0) - Number(a.score || 0)) || (Number(b.winRate || 0) - Number(a.winRate || 0)))
     [0] || null;
 }

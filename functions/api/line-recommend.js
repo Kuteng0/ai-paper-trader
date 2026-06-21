@@ -28,7 +28,7 @@ export async function onRequestPost({ request, env }) {
     .sort((a, b) => (b.score - a.score) || (b.winRate - a.winRate) || (b.profitFactor - a.profitFactor) || (b.trades - a.trades))
     .slice(0, 10);
 
-  const modelChampionRaw = activeState.model?.champion?.strategy ? normalizeChampion(activeState.model.champion) : null;
+  const modelChampionRaw = selectModelChampion(activeState.model, forceSymbol);
   const eligibleModelChampion = modelChampionRaw && modelChampionRaw.liveEligible !== false && modelChampionRaw.grade !== "观察" ? modelChampionRaw : null;
   const modelChampion = forceSymbol && eligibleModelChampion?.symbol !== forceSymbol ? null : eligibleModelChampion;
   if (!top10.length && !modelChampion) return json({ error: "AI模型还没有可用冠军策略。请先运行训练模式。" }, 400);
@@ -71,6 +71,16 @@ function normalizeCloudState(value) {
   if (Array.isArray(value)) return { records: value, model: null };
   if (value && typeof value === "object") return { records: Array.isArray(value.records) ? value.records : [], model: value.model || null };
   return { records: [], model: null };
+}
+
+function selectModelChampion(model, forceSymbol = "") {
+  if (!model || typeof model !== "object") return null;
+  if (forceSymbol === "BTCUSD") {
+    return model.btcChampion?.strategy ? normalizeChampion(model.btcChampion) : null;
+  }
+  const candidate = model.generalChampion?.strategy ? model.generalChampion : model.champion;
+  if (!candidate?.strategy || candidate.symbol === "BTCUSD") return null;
+  return normalizeChampion(candidate);
 }
 
 function normalizeChampion(champion) {

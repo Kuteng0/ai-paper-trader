@@ -45,27 +45,52 @@ function isValidRecord(record) {
 function chooseModel(existing, incoming) {
   const validExisting = isValidModel(existing) ? existing : null;
   const validIncoming = isValidModel(incoming) ? incoming : null;
-  if (!validIncoming) return validExisting;
-  if (!validExisting) return validIncoming;
+  if (!validIncoming) return normalizeModel(validExisting);
+  if (!validExisting) return normalizeModel(validIncoming);
   return mergeModels(validExisting, validIncoming);
 }
 
 function mergeModels(existing, incoming) {
   const population = mergePopulation(existing.population, incoming.population);
-  const championPool = [
+  const championPool = mergePopulation([
     ...population,
     existing.champion,
-    incoming.champion
-  ].filter((item) => item && item.strategy && item.liveEligible !== false && item.grade !== "观察");
-  const champion = championPool.sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || incoming.champion || existing.champion || null;
+    incoming.champion,
+    existing.generalChampion,
+    incoming.generalChampion,
+    existing.btcChampion,
+    incoming.btcChampion
+  ].filter(Boolean), []);
+  const livePool = championPool.filter((item) => item.liveEligible !== false && item.grade !== "观察");
+  const generalChampion = livePool.find((item) => item.symbol !== "BTCUSD") || incoming.generalChampion || existing.generalChampion || null;
+  const btcChampion = championPool.find((item) => item.symbol === "BTCUSD") || incoming.btcChampion || existing.btcChampion || null;
+  const champion = generalChampion || livePool[0] || null;
   return {
     ...existing,
     ...incoming,
+    version: 2,
     generation: Math.max(Number(existing.generation || 0), Number(incoming.generation || 0)),
     population,
+    generalChampion,
+    btcChampion,
     champion,
     updatedAt: new Date().toISOString(),
     mergedAt: new Date().toISOString()
+  };
+}
+
+function normalizeModel(model) {
+  if (!model) return null;
+  const population = mergePopulation(model.population || [], []);
+  const pool = mergePopulation([...(population || []), model.champion, model.generalChampion, model.btcChampion].filter(Boolean), []);
+  const livePool = pool.filter((item) => item.liveEligible !== false && item.grade !== "观察");
+  return {
+    ...model,
+    version: 2,
+    population,
+    generalChampion: model.generalChampion || livePool.find((item) => item.symbol !== "BTCUSD") || null,
+    btcChampion: model.btcChampion || pool.find((item) => item.symbol === "BTCUSD") || null,
+    champion: model.generalChampion || (model.champion?.symbol !== "BTCUSD" ? model.champion : null) || livePool.find((item) => item.symbol !== "BTCUSD") || livePool[0] || null
   };
 }
 
