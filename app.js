@@ -87,6 +87,23 @@ function indicators(candles, strategy) { const closes = candles.map((c) => c.clo
 function signalAt(i, candles, ind, strategy) {
   if (i < Math.max(strategy.slow, 20)) return null;
   const prevFast = ind.emaFast[i - 1], prevSlow = ind.emaSlow[i - 1], fast = ind.emaFast[i], slow = ind.emaSlow[i], momentum = candles[i].close - candles[i - 3].close;
+  const mode = strategy.mode || "cross";
+  const recent = candles.slice(Math.max(0, i - 20), i);
+  const recentHigh = Math.max(...recent.map((c) => c.high));
+  const recentLow = Math.min(...recent.map((c) => c.low));
+  const atrNow = ind.atr[i] || 0;
+  if (mode === "momentum") {
+    if (fast > slow && ind.rsi[i] >= strategy.rsiCeil && momentum > atrNow * 0.25) return "long";
+    if (fast < slow && ind.rsi[i] <= strategy.rsiFloor && momentum < -atrNow * 0.25) return "short";
+  }
+  if (mode === "breakout") {
+    if (fast > slow && candles[i].close > recentHigh && ind.rsi[i] >= 50) return "long";
+    if (fast < slow && candles[i].close < recentLow && ind.rsi[i] <= 50) return "short";
+  }
+  if (mode === "pullback") {
+    if (fast > slow && candles[i - 1].close <= ind.emaFast[i - 1] && candles[i].close > fast && ind.rsi[i] >= 45) return "long";
+    if (fast < slow && candles[i - 1].close >= ind.emaFast[i - 1] && candles[i].close < fast && ind.rsi[i] <= 55) return "short";
+  }
   if (prevFast <= prevSlow && fast > slow && ind.rsi[i] >= strategy.rsiCeil && momentum > 0) return "long";
   if (prevFast >= prevSlow && fast < slow && ind.rsi[i] <= strategy.rsiFloor && momentum < 0) return "short";
   return null;
@@ -168,6 +185,21 @@ function randomStrategy() {
   const fast = randomInt(4, 16);
   const slow = randomInt(Math.max(18, fast + 4), 55);
   return { fast, slow, rsiFloor: randomInt(35, 48), rsiCeil: randomInt(52, 65), stopAtr: randomFloat(0.9, 2.4), takeProfitR: randomFloat(1.1, 3.0) };
+}
+
+function randomBtcStrategy() {
+  const fast = randomInt(5, 24);
+  const slow = randomInt(Math.max(20, fast + 5), 80);
+  const modes = ["cross", "momentum", "breakout", "pullback"];
+  return {
+    mode: modes[randomInt(0, modes.length - 1)],
+    fast,
+    slow,
+    rsiFloor: randomInt(38, 50),
+    rsiCeil: randomInt(50, 62),
+    stopAtr: randomFloat(0.8, 2.8),
+    takeProfitR: randomFloat(0.9, 3.4)
+  };
 }
 function randomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 function randomFloat(min, max) { return Math.round((min + Math.random() * (max - min)) * 10) / 10; }
@@ -554,7 +586,7 @@ function renderLeaderboard() {
 
 function learningRecordKey(record) {
   const s = record.strategy || {};
-  return [record.symbol, record.interval, record.range || "60d", record.windowKey || "full", record.regime || "unknown", s.fast, s.slow, s.rsiFloor, s.rsiCeil, s.stopAtr, s.takeProfitR].join("|");
+  return [record.symbol, record.interval, record.range || "60d", record.windowKey || "full", record.regime || "unknown", s.mode || "cross", s.fast, s.slow, s.rsiFloor, s.rsiCeil, s.stopAtr, s.takeProfitR].join("|");
 }
 
 function saveLearningRecord(record) {
@@ -597,7 +629,7 @@ function saveModel(model = state.model) {
 }
 
 function strategyKey(strategy) {
-  return [strategy.fast, strategy.slow, strategy.rsiFloor, strategy.rsiCeil, strategy.stopAtr, strategy.takeProfitR].join("-");
+  return [strategy.mode || "cross", strategy.fast, strategy.slow, strategy.rsiFloor, strategy.rsiCeil, strategy.stopAtr, strategy.takeProfitR].join("-");
 }
 
 function updateModelFromCandidates(candidates) {
@@ -759,7 +791,7 @@ function renderBtcModelPanel() {
       <strong>BTCUSD 单独模型 / 等级 ${btc.grade || "B"} / 评分 ${Math.round(Number(btc.score || 0))}</strong>
       <span>来源 ${btc.source || "模型种群"} / 周期 ${btc.interval || "-"} / 范围 ${btc.range || "-"} / 窗口 ${btc.windowKey || "-"}</span>
       <span>正确率 ${pct(Number(btc.winRate || 0))} / 交易 ${btc.trades || 0} 笔 / 盈亏比 ${Number(btc.profitFactor || 0).toFixed(2)} / 回撤 ${((btc.maxDrawdown || 0) * 100).toFixed(1)}%</span>
-      <span>参数 EMA ${s.fast}/${s.slow}，RSI ${s.rsiFloor}/${s.rsiCeil}，止损 ${s.stopAtr}ATR，止盈 ${s.takeProfitR}R</span>
+      <span>参数 ${s.mode || "cross"} / EMA ${s.fast}/${s.slow}，RSI ${s.rsiFloor}/${s.rsiCeil}，止损 ${s.stopAtr}ATR，止盈 ${s.takeProfitR}R</span>
     </div>
   `;
 }
@@ -833,7 +865,7 @@ async function randomLearnBtcOnly() {
   const cfg = settings();
   const allResults = [];
   setBusy(true);
-  addFeedback(`BTCUSD单独训练：真实历史行情，周期 ${plan.interval}，范围 ${plan.range}，随机窗口 + 160组随机/变异策略。`, true);
+  addFeedback(`BTCUSD单独训练：真实历史行情，周期 ${plan.interval}，范围 ${plan.range}，随机窗口 + 220组BTC专用随机/变异策略。`, true);
   try {
     currentModel();
     for (const symbol of ["BTCUSD"]) {
@@ -846,9 +878,9 @@ async function randomLearnBtcOnly() {
         defaultStrategy,
         ...modelSeedStrategies(symbol, interval),
         ...seededStrategies(symbol, interval),
-        ...Array.from({ length: 160 }, randomStrategy)
+        ...Array.from({ length: 220 }, randomBtcStrategy)
       ];
-      const unique = new Map(strategies.map((strategy) => [`${strategy.fast}-${strategy.slow}-${strategy.rsiFloor}-${strategy.rsiCeil}-${strategy.stopAtr}-${strategy.takeProfitR}`, strategy]));
+      const unique = new Map(strategies.map((strategy) => [strategyKey(strategy), strategy]));
       let bestObservation = null;
       for (const strategy of unique.values()) {
         const evaluation = evaluateStrategy(trainCandles, cfg, strategy);

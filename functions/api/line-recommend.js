@@ -161,7 +161,7 @@ async function latestMarketTick(env, symbol) {
 
 async function latestBtcTicker() {
   const errors = [];
-  for (const source of [latestBinanceTicker, latestCoinbaseTicker, latestKrakenTicker]) {
+  for (const source of [latestBybitTicker, latestOkxTicker, latestBinanceTicker, latestCoinbaseTicker, latestKrakenTicker]) {
     try {
       const tick = await source();
       if (tick?.last) return tick;
@@ -170,6 +170,24 @@ async function latestBtcTicker() {
     }
   }
   return null;
+}
+
+async function latestBybitTicker() {
+  const response = await fetch("https://api.bybit.com/v5/market/tickers?category=spot&symbol=BTCUSDT", { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error(`Bybit ticker ${response.status}`);
+  const data = await response.json();
+  if (data.retCode !== 0) throw new Error(`Bybit ticker ${data.retCode}`);
+  const item = data.result?.list?.[0];
+  return { symbol: "BTCUSD", label: "BTCUSD", last: Number(item?.lastPrice), source: "Bybit ticker", updatedAt: new Date().toISOString() };
+}
+
+async function latestOkxTicker() {
+  const response = await fetch("https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT", { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error(`OKX ticker ${response.status}`);
+  const data = await response.json();
+  if (data.code !== "0") throw new Error(`OKX ticker ${data.code}`);
+  const item = data.data?.[0];
+  return { symbol: "BTCUSD", label: "BTCUSD", bid: Number(item?.bidPx), ask: Number(item?.askPx), last: Number(item?.last), source: "OKX ticker", updatedAt: new Date().toISOString() };
 }
 
 async function latestBinanceTicker() {
@@ -233,7 +251,7 @@ async function fetchBinanceCandles(interval) {
 
 async function fetchBtcCandles(interval) {
   const errors = [];
-  for (const source of [fetchBinanceCandles, fetchCoinbaseCandles, fetchKrakenCandles]) {
+  for (const source of [fetchBybitCandles, fetchOkxCandles, fetchBinanceCandles, fetchCoinbaseCandles, fetchKrakenCandles]) {
     try {
       const candles = await source(interval);
       if (candles.length >= 80) return candles;
@@ -243,6 +261,45 @@ async function fetchBtcCandles(interval) {
     }
   }
   throw new Error(`BTCUSD最新行情获取失败：${errors.join("；")}`);
+}
+
+async function fetchBybitCandles(interval) {
+  const endpoint = new URL("https://api.bybit.com/v5/market/kline");
+  endpoint.searchParams.set("category", "spot");
+  endpoint.searchParams.set("symbol", "BTCUSDT");
+  endpoint.searchParams.set("interval", bybitInterval(interval));
+  endpoint.searchParams.set("limit", "1000");
+  const response = await fetch(endpoint.toString(), { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error(`Bybit ${response.status}`);
+  const payload = await response.json();
+  if (payload.retCode !== 0) throw new Error(`Bybit ${payload.retCode}`);
+  const rows = payload.result?.list || [];
+  return rows.sort((a, b) => Number(a[0]) - Number(b[0])).map((row) => ({
+    time: new Date(Number(row[0])).toISOString().replace("T", " ").slice(0, 16),
+    open: round(Number(row[1])),
+    high: round(Number(row[2])),
+    low: round(Number(row[3])),
+    close: round(Number(row[4]))
+  })).filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite));
+}
+
+async function fetchOkxCandles(interval) {
+  const endpoint = new URL("https://www.okx.com/api/v5/market/candles");
+  endpoint.searchParams.set("instId", "BTC-USDT");
+  endpoint.searchParams.set("bar", okxBar(interval));
+  endpoint.searchParams.set("limit", "300");
+  const response = await fetch(endpoint.toString(), { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" } });
+  if (!response.ok) throw new Error(`OKX ${response.status}`);
+  const payload = await response.json();
+  if (payload.code !== "0") throw new Error(`OKX ${payload.code}`);
+  const rows = payload.data || [];
+  return rows.sort((a, b) => Number(a[0]) - Number(b[0])).map((row) => ({
+    time: new Date(Number(row[0])).toISOString().replace("T", " ").slice(0, 16),
+    open: round(Number(row[1])),
+    high: round(Number(row[2])),
+    low: round(Number(row[3])),
+    close: round(Number(row[4]))
+  })).filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite));
 }
 
 async function fetchCoinbaseCandles(interval) {
@@ -285,6 +342,14 @@ function granularity(interval) {
   return { "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "1d": 86400 }[interval] || 900;
 }
 
+function bybitInterval(interval) {
+  return { "5m": "5", "15m": "15", "30m": "30", "1h": "60", "1d": "D" }[interval] || "15";
+}
+
+function okxBar(interval) {
+  return { "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1H", "1d": "1D" }[interval] || "15m";
+}
+
 function indicators(candles, strategy) {
   const closes = candles.map((c) => c.close);
   return { emaFast: ema(closes, strategy.fast), emaSlow: ema(closes, strategy.slow), rsi: rsi(closes, 14), atr: atr(candles, 14) };
@@ -302,6 +367,23 @@ function atr(candles, period) {
 function signalAt(i, candles, ind, strategy) {
   if (i < Math.max(strategy.slow, 20)) return null;
   const prevFast = ind.emaFast[i - 1], prevSlow = ind.emaSlow[i - 1], fast = ind.emaFast[i], slow = ind.emaSlow[i], momentum = candles[i].close - candles[i - 3].close;
+  const mode = strategy.mode || "cross";
+  const recent = candles.slice(Math.max(0, i - 20), i);
+  const recentHigh = Math.max(...recent.map((c) => c.high));
+  const recentLow = Math.min(...recent.map((c) => c.low));
+  const atrNow = ind.atr[i] || 0;
+  if (mode === "momentum") {
+    if (fast > slow && ind.rsi[i] >= strategy.rsiCeil && momentum > atrNow * 0.25) return "long";
+    if (fast < slow && ind.rsi[i] <= strategy.rsiFloor && momentum < -atrNow * 0.25) return "short";
+  }
+  if (mode === "breakout") {
+    if (fast > slow && candles[i].close > recentHigh && ind.rsi[i] >= 50) return "long";
+    if (fast < slow && candles[i].close < recentLow && ind.rsi[i] <= 50) return "short";
+  }
+  if (mode === "pullback") {
+    if (fast > slow && candles[i - 1].close <= ind.emaFast[i - 1] && candles[i].close > fast && ind.rsi[i] >= 45) return "long";
+    if (fast < slow && candles[i - 1].close >= ind.emaFast[i - 1] && candles[i].close < fast && ind.rsi[i] <= 55) return "short";
+  }
   if (prevFast <= prevSlow && fast > slow && ind.rsi[i] >= strategy.rsiCeil && momentum > 0) return "long";
   if (prevFast >= prevSlow && fast < slow && ind.rsi[i] <= strategy.rsiFloor && momentum < 0) return "short";
   return null;

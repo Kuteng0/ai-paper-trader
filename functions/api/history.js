@@ -27,7 +27,7 @@ export async function onRequestGet({ request }) {
 
 async function fetchBtcHistory(interval, range) {
   const errors = [];
-  for (const source of [fetchBinanceHistory, fetchCoinbaseHistory, fetchKrakenHistory]) {
+  for (const source of [fetchBybitHistory, fetchOkxHistory, fetchBinanceHistory, fetchCoinbaseHistory, fetchKrakenHistory]) {
     try {
       const result = await source(interval, range);
       if (result.candles.length >= 80) return json(result, 200, { "Cache-Control": interval === "1d" ? "public, max-age=300" : "public, max-age=15" });
@@ -37,6 +37,36 @@ async function fetchBtcHistory(interval, range) {
     }
   }
   return json({ error: `BTCUSD行情源暂时不可用：${errors.join("；")}` }, 502);
+}
+
+async function fetchBybitHistory(interval, range) {
+  const endpoint = new URL("https://api.bybit.com/v5/market/kline");
+  endpoint.searchParams.set("category", "spot");
+  endpoint.searchParams.set("symbol", "BTCUSDT");
+  endpoint.searchParams.set("interval", bybitInterval(interval));
+  endpoint.searchParams.set("limit", "1000");
+  endpoint.searchParams.set("start", String(Date.now() - rangeMs(range)));
+  const response = await fetch(endpoint.toString(), { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" }, cf: { cacheTtl: interval === "1d" ? 300 : 15, cacheEverything: true } });
+  if (!response.ok) throw new Error(`Bybit ${response.status}`);
+  const payload = await response.json();
+  if (payload.retCode !== 0) throw new Error(`Bybit ${payload.retCode}`);
+  const rows = payload.result?.list || [];
+  const candles = rows.sort((a, b) => Number(a[0]) - Number(b[0])).map((row) => candle(new Date(Number(row[0])), row[1], row[2], row[3], row[4])).filter(validCandle);
+  return { symbol: "BTCUSD", label: "BTCUSD 比特币", interval, range, source: "Bybit BTCUSDT kline", candles };
+}
+
+async function fetchOkxHistory(interval, range) {
+  const endpoint = new URL("https://www.okx.com/api/v5/market/candles");
+  endpoint.searchParams.set("instId", "BTC-USDT");
+  endpoint.searchParams.set("bar", okxBar(interval));
+  endpoint.searchParams.set("limit", "300");
+  const response = await fetch(endpoint.toString(), { headers: { "User-Agent": "Mozilla/5.0 AI Paper Trader" }, cf: { cacheTtl: interval === "1d" ? 300 : 15, cacheEverything: true } });
+  if (!response.ok) throw new Error(`OKX ${response.status}`);
+  const payload = await response.json();
+  if (payload.code !== "0") throw new Error(`OKX ${payload.code}`);
+  const rows = payload.data || [];
+  const candles = rows.sort((a, b) => Number(a[0]) - Number(b[0])).map((row) => candle(new Date(Number(row[0])), row[1], row[2], row[3], row[4])).filter(validCandle);
+  return { symbol: "BTCUSD", label: "BTCUSD 比特币", interval, range, source: "OKX BTC-USDT candles", candles };
 }
 
 async function fetchYahooHistory(symbol, interval, range) {
@@ -96,6 +126,14 @@ async function fetchKrakenHistory(interval, range) {
 
 function granularity(interval) {
   return { "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "1d": 86400 }[interval] || 900;
+}
+
+function bybitInterval(interval) {
+  return { "5m": "5", "15m": "15", "30m": "30", "1h": "60", "1d": "D" }[interval] || "15";
+}
+
+function okxBar(interval) {
+  return { "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1H", "1d": "1D" }[interval] || "15m";
 }
 
 function rangeMs(range) {
