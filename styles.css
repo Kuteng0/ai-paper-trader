@@ -173,6 +173,11 @@ details[open] > .panel-summary::after { content: "⌃"; }
 .primary-actions { margin-top: 12px; }
 .primary-button { background: var(--green); }
 .accent-button, .wide-button { background: var(--yellow); }
+.primary-actions button.is-on {
+  background: var(--green);
+  color: #06130d;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .18);
+}
 .wide-button { width: 100%; }
 .cloud-actions { margin-top: 8px; }
 .cloud-actions button { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); }

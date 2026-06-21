@@ -185,7 +185,7 @@ function optimize() {
 function randomStrategy() {
   const fast = randomInt(4, 16);
   const slow = randomInt(Math.max(18, fast + 4), 55);
-  return { fast, slow, rsiFloor: randomInt(35, 48), rsiCeil: randomInt(52, 65), stopAtr: randomFloat(0.9, 2.4), takeProfitR: randomFloat(1.1, 3.0) };
+  return { fast, slow, rsiFloor: randomInt(35, 48), rsiCeil: randomInt(52, 65), stopAtr: randomFloat(0.8, 2.2), takeProfitR: randomFloat(1.3, 3.4) };
 }
 
 function randomBtcStrategy() {
@@ -199,7 +199,7 @@ function randomBtcStrategy() {
     rsiFloor: randomInt(38, 50),
     rsiCeil: randomInt(50, 62),
     stopAtr: randomFloat(0.8, 2.8),
-    takeProfitR: randomFloat(0.9, 3.4)
+    takeProfitR: randomFloat(1.2, 3.6)
   };
 }
 function randomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -209,11 +209,15 @@ function scoreResult(result, capital) {
   const grade = gradeStrategy(result);
   const sampleScore = Math.min(trades, 60) * 4;
   const expectancy = result.trades.length ? result.trades.reduce((sum, trade) => sum + trade.rValue, 0) / result.trades.length : 0;
-  let score = result.winRate * 220 + Math.min(result.profitFactor, 4) * 100 + result.avgR * 150 + expectancy * 120 + result.netProfit / Math.max(1, capital) * 420 - result.maxDrawdown * 1200 + sampleScore;
+  const profitRate = result.netProfit / Math.max(1, capital);
+  let score = result.winRate * 160 + Math.min(result.profitFactor, 5) * 135 + result.avgR * 220 + expectancy * 180 + profitRate * 760 - result.maxDrawdown * 950 + sampleScore;
   if (trades < MIN_LEARNING_TRADES) score -= 300;
   if (trades < 18) score -= 90;
   if (result.profitFactor < 1.15) score -= 180;
   if (result.avgR <= 0) score -= 180;
+  if (result.netProfit <= 0) score -= 260;
+  if (profitRate > 0.02) score += 140;
+  if (profitRate > 0.05) score += 220;
   if (result.maxDrawdown > 0.08) score -= 220;
   if (result.maxDrawdown > 0.12) score -= 400;
   if (grade === "A") score += 120;
@@ -689,7 +693,7 @@ function modelSeedStrategies(symbol, interval) {
 }
 
 function randomTrainingPlan() {
-  const intervals = ["5m", "15m", "30m", "1h"];
+  const intervals = ["5m", "15m", "30m"];
   const ranges = ["5d", "1mo", "60d"];
   return {
     interval: intervals[randomInt(0, intervals.length - 1)],
@@ -699,7 +703,7 @@ function randomTrainingPlan() {
 }
 
 function btcTrainingPlan() {
-  const intervals = ["5m", "15m", "30m", "1h"];
+  const intervals = ["5m", "15m", "30m"];
   const ranges = ["1mo", "60d", "6mo"];
   return {
     interval: intervals[randomInt(0, intervals.length - 1)],

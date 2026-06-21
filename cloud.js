@@ -11,6 +11,8 @@ const FREE_LIMITS = {
 const LIVE_REFS_KEY = "paperTrader.liveRefs";
 const LIVE_MONITOR_KEY = "paperTrader.liveMonitor";
 const LIVE_SYMBOL_KEY = "paperTrader.liveSymbol";
+const LIVE_GENERAL_KEY = "paperTrader.liveGeneral";
+const LIVE_BTC_KEY = "paperTrader.liveBtc";
 const LAST_SIGNAL_KEY = "paperTrader.lastSignalKey";
 const PRE_CLOSE_KEY = "paperTrader.preClose";
 const MARKET_ACTIVITY_KEY = "paperTrader.marketActivity";
@@ -67,8 +69,8 @@ function nthWeekdayOfMonth(year, monthIndex, weekday, nth) {
   return date;
 }
 
-function cfdSessionState(date = jstNow()) {
-  if (localStorage.getItem(LIVE_SYMBOL_KEY) === "BTCUSD") {
+function cfdSessionState(date = jstNow(), forceSymbol = localStorage.getItem(LIVE_SYMBOL_KEY) || "") {
+  if (forceSymbol === "BTCUSD") {
     return { open: true, beforeClose: false, reason: "BTCUSD 24小时交易", summer: isUsSummerTimeForTrading(date), closeMinute: null, reopenMinute: null, nextDelayMs: REALTIME_NORMAL_INTERVAL_MS };
   }
   const day = date.getDay();
@@ -218,19 +220,58 @@ function confirmCloudAction(kind) {
 }
 
 async function lineFollowRecommendation() {
-  localStorage.setItem(LIVE_MONITOR_KEY, "on");
-  localStorage.removeItem(LIVE_SYMBOL_KEY);
-  addFeedback("自适应实时盯盘已开启：行情活跃时最快10秒检查，安静或额度超过90%时自动降频。");
-  await runRealtimeMonitorCycle("manual");
+  const nextOn = localStorage.getItem(LIVE_GENERAL_KEY) !== "on";
+  localStorage.setItem(LIVE_GENERAL_KEY, nextOn ? "on" : "off");
+  updateLiveMonitorState();
+  updateLiveButtons();
+  addFeedback(nextOn ? "全局模型实时LINE已开启：按短线模型和行情活跃度自适应检查。" : "全局模型实时LINE已关闭。", true);
+  if (nextOn) await runRealtimeMonitorCycle("manual");
   scheduleRealtimeMonitor();
 }
 
 async function btcLineRecommendation() {
-  localStorage.setItem(LIVE_MONITOR_KEY, "on");
-  localStorage.setItem(LIVE_SYMBOL_KEY, "BTCUSD");
-  addFeedback("BTCUSD实时LINE已开启：只检查BTCUSD策略，行情活跃时最快2秒检查。", true);
-  await runRealtimeMonitorCycle("manual");
+  const nextOn = localStorage.getItem(LIVE_BTC_KEY) !== "on";
+  localStorage.setItem(LIVE_BTC_KEY, nextOn ? "on" : "off");
+  updateLiveMonitorState();
+  updateLiveButtons();
+  addFeedback(nextOn ? "BTCUSD实时LINE已开启：只检查BTCUSD策略，行情活跃时最快2秒检查。" : "BTCUSD实时LINE已关闭。", true);
+  if (nextOn) await runRealtimeMonitorCycle("manual");
   scheduleRealtimeMonitor();
+}
+
+function enabledLiveModes() {
+  const modes = [];
+  if (localStorage.getItem(LIVE_GENERAL_KEY) === "on") modes.push("");
+  if (localStorage.getItem(LIVE_BTC_KEY) === "on") modes.push("BTCUSD");
+  return modes;
+}
+
+function migrateLegacyLiveState() {
+  if (localStorage.getItem(LIVE_GENERAL_KEY) || localStorage.getItem(LIVE_BTC_KEY)) return;
+  if (localStorage.getItem(LIVE_MONITOR_KEY) !== "on") return;
+  if (localStorage.getItem(LIVE_SYMBOL_KEY) === "BTCUSD") localStorage.setItem(LIVE_BTC_KEY, "on");
+  else localStorage.setItem(LIVE_GENERAL_KEY, "on");
+}
+
+function updateLiveMonitorState() {
+  const modes = enabledLiveModes();
+  localStorage.setItem(LIVE_MONITOR_KEY, modes.length ? "on" : "off");
+  localStorage.setItem(LIVE_SYMBOL_KEY, modes.length === 1 ? modes[0] : "");
+}
+
+function updateLiveButtons() {
+  const follow = document.getElementById("followModeButton");
+  const btcLine = document.getElementById("btcLineButton");
+  const generalOn = localStorage.getItem(LIVE_GENERAL_KEY) === "on";
+  const btcOn = localStorage.getItem(LIVE_BTC_KEY) === "on";
+  if (follow) {
+    follow.textContent = generalOn ? "关闭全局LINE" : "开启全局LINE";
+    follow.classList.toggle("is-on", generalOn);
+  }
+  if (btcLine) {
+    btcLine.textContent = btcOn ? "关闭BTC LINE" : "BTC实时LINE";
+    btcLine.classList.toggle("is-on", btcOn);
+  }
 }
 
 async function sendLineEvent(text) {
@@ -401,12 +442,11 @@ function rememberLiveSignal(selected, live) {
   if (key) localStorage.setItem(LAST_SIGNAL_KEY, key);
 }
 
-async function checkNewEntrySignal() {
+async function checkNewEntrySignal(forceSymbol = "") {
   if (getUsage("linePushes") >= FREE_LIMITS.linePushesPerDay) {
     addFeedback(`LINE今日推送已达到保护上限 ${FREE_LIMITS.linePushesPerDay}，实时盯盘仍会检查行情，但不会继续推送。`, true);
     return;
   }
-  const forceSymbol = localStorage.getItem(LIVE_SYMBOL_KEY) || "";
   const probe = await lineJson({ records: state.learning || [], model: state.model || null, dryRun: true, forceSymbol });
   const activity = updateMarketActivityFromProbe(probe);
   const live = probe.live;
@@ -450,14 +490,18 @@ async function runRealtimeMonitorCycle(source = "timer") {
   if (realtimeMonitorRunning) return;
   realtimeMonitorRunning = true;
   try {
-    const session = cfdSessionState();
-    if (!session.open) {
-      addFeedback(`实时盯盘暂停高频检查：${session.reason}。下一轮低频检查。`);
-      return;
-    }
+    const modes = enabledLiveModes();
+    if (!modes.length) return;
     await checkLiveReferenceOutcomes().catch((error) => addFeedback(`实时追踪检查失败：${error.message || error}`, true));
-    await checkNewEntrySignal().catch((error) => addFeedback(`实时入场检查失败：${error.message || error}`, true));
-    if (session.beforeClose) await runPreClosePreparation(session).catch((error) => addFeedback(`关盘前预处理失败：${error.message || error}`, true));
+    for (const mode of modes) {
+      const session = cfdSessionState(jstNow(), mode);
+      if (!session.open) {
+        addFeedback(`${mode === "BTCUSD" ? "BTC" : "全局"}实时盯盘暂停高频检查：${session.reason}。`);
+        continue;
+      }
+      await checkNewEntrySignal(mode).catch((error) => addFeedback(`${mode === "BTCUSD" ? "BTC" : "全局"}实时入场检查失败：${error.message || error}`, true));
+      if (!mode && session.beforeClose) await runPreClosePreparation(session).catch((error) => addFeedback(`关盘前预处理失败：${error.message || error}`, true));
+    }
     if (source === "manual") addFeedback("实时盯盘首轮检查完成。PC端保持页面打开即可持续监控。", true);
   } finally {
     realtimeMonitorRunning = false;
@@ -466,13 +510,15 @@ async function runRealtimeMonitorCycle(source = "timer") {
 
 function scheduleRealtimeMonitor() {
   if (realtimeTimerId) window.clearTimeout(realtimeTimerId);
-  const session = cfdSessionState();
+  const modes = enabledLiveModes();
+  if (!modes.length) return;
+  const session = cfdSessionState(jstNow(), modes.includes("BTCUSD") ? "BTCUSD" : "");
   const delay = adaptiveDelayMs(session);
   realtimeTimerId = window.setTimeout(async () => {
-    if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") await runRealtimeMonitorCycle().catch(() => {});
+    if (enabledLiveModes().length) await runRealtimeMonitorCycle().catch(() => {});
     scheduleRealtimeMonitor();
   }, delay);
-  if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") {
+  if (enabledLiveModes().length) {
     const ratio = Math.round(usageRatio() * 100);
     addFeedback(`自适应调度：下一轮 ${adaptiveDelayText(delay)} 后。额度 ${ratio}% / ${session.reason}。`);
   }
@@ -578,6 +624,7 @@ function bindCloudButtons() {
   const restore = document.getElementById("restoreCloudButton");
   const cloudStatus = document.getElementById("cloudStatus");
   if (cloudStatus) cloudStatus.textContent = "免费保护模式";
+  updateLiveButtons();
   if (training) training.addEventListener("click", () => trainingMode().catch((error) => { showError(error); addFeedback(`训练模式失败：${error.message || error}`, true); }));
   if (follow) follow.addEventListener("click", () => lineFollowRecommendation().catch((error) => { showError(error); addFeedback(`实盘LINE失败：${error.message || error}`, true); }));
   if (btcLine) btcLine.addEventListener("click", () => btcLineRecommendation().catch((error) => { showError(error); addFeedback(`BTC实时LINE失败：${error.message || error}`, true); }));
@@ -591,5 +638,8 @@ renderLiveReferenceLog();
 updateUnsyncedStatus();
 checkMissedAutoSync();
 scheduleMidnightAutoSync();
-if (localStorage.getItem(LIVE_MONITOR_KEY) === "on") scheduleRealtimeMonitor();
+migrateLegacyLiveState();
+updateLiveMonitorState();
+updateLiveButtons();
+if (enabledLiveModes().length) scheduleRealtimeMonitor();
 addFeedback("免费保护模式已启用：点击“开启实时LINE”后，按行情活跃度和Cloudflare额度自适应调度。", true);

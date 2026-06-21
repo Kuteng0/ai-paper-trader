@@ -47,7 +47,41 @@ function chooseModel(existing, incoming) {
   const validIncoming = isValidModel(incoming) ? incoming : null;
   if (!validIncoming) return validExisting;
   if (!validExisting) return validIncoming;
-  return Number(validIncoming.generation || 0) >= Number(validExisting.generation || 0) ? validIncoming : validExisting;
+  return mergeModels(validExisting, validIncoming);
+}
+
+function mergeModels(existing, incoming) {
+  const population = mergePopulation(existing.population, incoming.population);
+  const championPool = [
+    ...population,
+    existing.champion,
+    incoming.champion
+  ].filter((item) => item && item.strategy && item.liveEligible !== false && item.grade !== "观察");
+  const champion = championPool.sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || incoming.champion || existing.champion || null;
+  return {
+    ...existing,
+    ...incoming,
+    generation: Math.max(Number(existing.generation || 0), Number(incoming.generation || 0)),
+    population,
+    champion,
+    updatedAt: new Date().toISOString(),
+    mergedAt: new Date().toISOString()
+  };
+}
+
+function mergePopulation(a = [], b = []) {
+  const map = new Map();
+  for (const item of [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]) {
+    if (!item?.strategy || !item.symbol) continue;
+    const key = `${item.symbol}|${item.interval || ""}|${item.regime || "unknown"}|${strategyKey(item.strategy)}`;
+    const prev = map.get(key);
+    if (!prev || Number(item.score || 0) > Number(prev.score || 0)) map.set(key, item);
+  }
+  return [...map.values()].sort((x, y) => Number(y.score || 0) - Number(x.score || 0)).slice(0, 50);
+}
+
+function strategyKey(strategy = {}) {
+  return [strategy.mode || "cross", strategy.fast, strategy.slow, strategy.rsiFloor, strategy.rsiCeil, strategy.stopAtr, strategy.takeProfitR].join("-");
 }
 
 function isValidModel(model) {
